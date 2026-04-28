@@ -1,0 +1,14 @@
+{
+  "name": "ip-switcher",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/cli": "^2",
+    "vite": "^8.0.3"
+  }
+}

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="550">
+  <rect width="700" height="550" fill="#1e1e1e"/>
+  <text x="350" y="45" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="18" font-weight="600" fill="#ffffff">It Hurts When IP</text>
+  <text x="350" y="68" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="12" fill="#666">Follow the steps below to install</text>
+  <line x1="40" y1="82" x2="660" y2="82" stroke="#333" stroke-width="1"/>
+  <rect x="20" y="95" width="195" height="230" rx="10" fill="#3a3a3a" stroke="#555" stroke-width="1"/>
+  <text x="117" y="118" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="11" font-weight="600" fill="#0a84ff">STEP 1 — REQUIRED</text>
+  <text x="117" y="134" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#ccc">Run the Helper Installer</text>
+  <rect x="57" y="145" width="120" height="120" rx="6" fill="#2c2c2c" stroke="#555" stroke-dasharray="4" stroke-width="1"/>
+  <text x="117" y="280" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#ff9f0a">⚠ Must be run first</text>
+  <text x="117" y="296" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#aaa">Enables password-free</text>
+  <text x="117" y="310" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#aaa">IP switching</text>
+  <line x1="220" y1="210" x2="248" y2="210" stroke="#0a84ff" stroke-width="1.5"/>
+  <polygon points="248,205 258,210 248,215" fill="#0a84ff"/>
+  <rect x="262" y="95" width="195" height="230" rx="10" fill="#3a3a3a" stroke="#555" stroke-width="1"/>
+  <text x="359" y="118" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="11" font-weight="600" fill="#0a84ff">STEP 2</text>
+  <text x="359" y="134" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#ccc">Drag App to Applications</text>
+  <rect x="299" y="145" width="120" height="120" rx="6" fill="#2c2c2c" stroke="#555" stroke-dasharray="4" stroke-width="1"/>
+  <text x="359" y="280" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#aaa">Drag It Hurts When IP</text>
+  <text x="359" y="296" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#aaa">into the Applications</text>
+  <text x="359" y="310" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#aaa">folder shortcut →</text>
+  <line x1="462" y1="210" x2="490" y2="210" stroke="#0a84ff" stroke-width="1.5"/>
+  <polygon points="490,205 500,210 490,215" fill="#0a84ff"/>
+  <rect x="504" y="95" width="175" height="230" rx="10" fill="#3a3a3a" stroke="#555" stroke-width="1"/>
+  <text x="591" y="118" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="11" font-weight="600" fill="#0a84ff">STEP 3</text>
+  <text x="591" y="134" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#ccc">Applications Folder</text>
+  <rect x="531" y="145" width="120" height="120" rx="6" fill="#2c2c2c" stroke="#555" stroke-dasharray="4" stroke-width="1"/>
+  <text x="591" y="280" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#aaa">Drop the app here then</text>
+  <text x="591" y="296" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#aaa">launch from Applications</text>
+  <line x1="40" y1="345" x2="660" y2="345" stroke="#333" stroke-width="1"/>
+  <rect x="20" y="355" width="300" height="170" rx="10" fill="#2c2c2c" stroke="#444" stroke-width="1"/>
+  <text x="170" y="378" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="11" font-weight="600" fill="#888">Uninstaller</text>
+  <text x="170" y="394" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#666">Run to remove the app and helper</text>
+  <rect x="95" y="405" width="150" height="80" rx="6" fill="#1e1e1e" stroke="#444" stroke-dasharray="4" stroke-width="1"/>
+  <rect x="380" y="355" width="300" height="170" rx="10" fill="#2c2c2c" stroke="#444" stroke-width="1"/>
+  <text x="530" y="378" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="11" font-weight="600" fill="#888">Read Me First</text>
+  <text x="530" y="394" text-anchor="middle" font-family="Helvetica Neue, sans-serif" font-size="10" fill="#666">Installation instructions</text>
+  <rect x="455" y="405" width="150" height="80" rx="6" fill="#1e1e1e" stroke="#444" stroke-dasharray="4" stroke-width="1"/>
+</svg>
