@@ -7,3 +7,5 @@ dist/
 dmg-contents/
 installer/
 .DS_Store
+Installer-Versions/
+build-pkg.sh
