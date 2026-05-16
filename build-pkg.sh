@@ -143,8 +143,8 @@ if [ -d "/Applications/It Hurts When IP.app" ]; then
 fi
 
 # Remove app data
-if [ -d ~/Library/Application\ Support/com.ithurtswhenip.app ]; then
-    rm -rf ~/Library/Application\ Support/com.ithurtswhenip.app
+if [ -d ~/Library/Application\ Support/com.ithurtswhenip.desktop ]; then
+    rm -rf ~/Library/Application\ Support/com.ithurtswhenip.desktop
     echo "  Removed app data"
 fi
 

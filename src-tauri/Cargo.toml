@@ -19,4 +19,7 @@ tauri-build = { version = "2", features = [] }
 # macOS-specific deps go here (currently none — std::os::unix is built in)
 
 [target.'cfg(target_os = "windows")'.dependencies]
-# Windows-specific deps will be added when Phase 3 brings in the Windows code
+# platform/windows.rs uses std::os::windows::process::CommandExt (built into
+# std on Windows) and shells out to PowerShell. No extra crates needed here.
+# windows-sys and windows-service live in service-tool/Cargo.toml because the
+# privileged Win32 IP Helper calls happen in that process, not in the Tauri app.
