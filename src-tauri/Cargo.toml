@@ -14,3 +14,9 @@ serde_json = "1"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS-specific deps go here (currently none — std::os::unix is built in)
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows-specific deps will be added when Phase 3 brings in the Windows code
