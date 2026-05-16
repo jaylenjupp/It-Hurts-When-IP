@@ -13,10 +13,10 @@
 #        cargo build --release --target aarch64-apple-darwin
 #        cargo build --release --target x86_64-apple-darwin
 #        lipo -create \
-#          target/aarch64-apple-darwin/release/ipswitcher-helper \
-#          target/x86_64-apple-darwin/release/ipswitcher-helper \
-#          -output com.ipswitcher.helper
-#        codesign -s - --force com.ipswitcher.helper
+#          target/aarch64-apple-darwin/release/ithurtswhenip-helper \
+#          target/x86_64-apple-darwin/release/ithurtswhenip-helper \
+#          -output com.ithurtswhenip.helper
+#        codesign -s - --force com.ithurtswhenip.helper
 #        cd ..
 #
 #   2. Universal app already built:
@@ -26,14 +26,16 @@
 
 set -e  # Exit on any error
 
+export COPYFILE_DISABLE=1
+
 APP_NAME="It Hurts When IP"
-PKG_ID="com.ipswitcher.pkg"
+PKG_ID="com.ithurtswhenip.pkg"
 VERSION="1.11.0"
 OUTPUT_PKG="ItHurtsWhenIP-${VERSION}.pkg"
 
 # --- Paths to your pre-built binaries ---
-HELPER_BIN="helper-tool/com.ipswitcher.helper"
-HELPER_PLIST="helper-tool/com.ipswitcher.helper.plist"
+HELPER_BIN="helper-tool/com.ithurtswhenip.helper"
+HELPER_PLIST="helper-tool/com.ithurtswhenip.helper.plist"
 APP_BUNDLE="src-tauri/target/universal-apple-darwin/release/bundle/macos/${APP_NAME}.app"
 
 # --- Working directories ---
@@ -87,12 +89,12 @@ mkdir -p "${SCRIPTS_DIR}"
 echo "[3/7] Assembling payload..."
 
 # Helper binary
-cp "${HELPER_BIN}" "${PAYLOAD_DIR}/Library/PrivilegedHelperTools/com.ipswitcher.helper"
-chmod 544 "${PAYLOAD_DIR}/Library/PrivilegedHelperTools/com.ipswitcher.helper"
+cp "${HELPER_BIN}" "${PAYLOAD_DIR}/Library/PrivilegedHelperTools/com.ithurtswhenip.helper"
+chmod 544 "${PAYLOAD_DIR}/Library/PrivilegedHelperTools/com.ithurtswhenip.helper"
 
 # LaunchDaemon plist
-cp "${HELPER_PLIST}" "${PAYLOAD_DIR}/Library/LaunchDaemons/com.ipswitcher.helper.plist"
-chmod 644 "${PAYLOAD_DIR}/Library/LaunchDaemons/com.ipswitcher.helper.plist"
+cp "${HELPER_PLIST}" "${PAYLOAD_DIR}/Library/LaunchDaemons/com.ithurtswhenip.helper.plist"
+chmod 644 "${PAYLOAD_DIR}/Library/LaunchDaemons/com.ithurtswhenip.helper.plist"
 
 # App bundle
 cp -R "${APP_BUNDLE}" "${PAYLOAD_DIR}/Applications/${APP_NAME}.app"
@@ -111,26 +113,26 @@ echo "============================================"
 echo ""
 
 # Stop and unload helper daemon
-if launchctl list 2>/dev/null | grep -q "com.ipswitcher.helper"; then
+if launchctl list 2>/dev/null | grep -q "com.ithurtswhenip.helper"; then
     echo "Stopping helper daemon..."
-    sudo launchctl unload /Library/LaunchDaemons/com.ipswitcher.helper.plist 2>/dev/null
+    sudo launchctl unload /Library/LaunchDaemons/com.ithurtswhenip.helper.plist 2>/dev/null
 fi
 
 # Remove helper binary
-if [ -f "/Library/PrivilegedHelperTools/com.ipswitcher.helper" ]; then
-    sudo rm -f /Library/PrivilegedHelperTools/com.ipswitcher.helper
+if [ -f "/Library/PrivilegedHelperTools/com.ithurtswhenip.helper" ]; then
+    sudo rm -f /Library/PrivilegedHelperTools/com.ithurtswhenip.helper
     echo "  Removed helper binary"
 fi
 
 # Remove LaunchDaemon plist
-if [ -f "/Library/LaunchDaemons/com.ipswitcher.helper.plist" ]; then
-    sudo rm -f /Library/LaunchDaemons/com.ipswitcher.helper.plist
+if [ -f "/Library/LaunchDaemons/com.ithurtswhenip.helper.plist" ]; then
+    sudo rm -f /Library/LaunchDaemons/com.ithurtswhenip.helper.plist
     echo "  Removed LaunchDaemon"
 fi
 
 # Remove socket
-if [ -S "/var/run/com.ipswitcher.helper.sock" ]; then
-    sudo rm -f /var/run/com.ipswitcher.helper.sock
+if [ -S "/var/run/com.ithurtswhenip.helper.sock" ]; then
+    sudo rm -f /var/run/com.ithurtswhenip.helper.sock
     echo "  Removed socket"
 fi
 
@@ -141,14 +143,14 @@ if [ -d "/Applications/It Hurts When IP.app" ]; then
 fi
 
 # Remove app data
-if [ -d ~/Library/Application\ Support/com.ipswitcher.switcher ]; then
-    rm -rf ~/Library/Application\ Support/com.ipswitcher.switcher
+if [ -d ~/Library/Application\ Support/com.ithurtswhenip.app ]; then
+    rm -rf ~/Library/Application\ Support/com.ithurtswhenip.app
     echo "  Removed app data"
 fi
 
 # Remove log files
-sudo rm -f /var/log/com.ipswitcher.helper.log 2>/dev/null
-sudo rm -f /var/log/com.ipswitcher.helper.error.log 2>/dev/null
+sudo rm -f /var/log/com.ithurtswhenip.helper.log 2>/dev/null
+sudo rm -f /var/log/com.ithurtswhenip.helper.error.log 2>/dev/null
 
 echo ""
 echo "Uninstall complete. You can close this window."
@@ -167,15 +169,15 @@ cat > "${SCRIPTS_DIR}/preinstall" << 'PREINSTALL_EOF'
 killall "It Hurts When IP" 2>/dev/null || true
 
 # Stop and unload existing helper daemon
-if launchctl list 2>/dev/null | grep -q "com.ipswitcher.helper"; then
-    launchctl unload /Library/LaunchDaemons/com.ipswitcher.helper.plist 2>/dev/null || true
+if launchctl list 2>/dev/null | grep -q "com.ithurtswhenip.helper"; then
+    launchctl unload /Library/LaunchDaemons/com.ithurtswhenip.helper.plist 2>/dev/null || true
 fi
 
 # Remove old socket
-rm -f /var/run/com.ipswitcher.helper.sock 2>/dev/null || true
+rm -f /var/run/com.ithurtswhenip.helper.sock 2>/dev/null || true
 
 # Remove old helper binary (will be replaced)
-rm -f /Library/PrivilegedHelperTools/com.ipswitcher.helper 2>/dev/null || true
+rm -f /Library/PrivilegedHelperTools/com.ithurtswhenip.helper 2>/dev/null || true
 
 exit 0
 PREINSTALL_EOF
@@ -188,30 +190,46 @@ cat > "${SCRIPTS_DIR}/postinstall" << 'POSTINSTALL_EOF'
 # Post-install: Set permissions and start helper daemon
 
 # Ensure correct ownership and permissions
-chown root:wheel /Library/PrivilegedHelperTools/com.ipswitcher.helper
-chmod 544 /Library/PrivilegedHelperTools/com.ipswitcher.helper
+chown root:wheel /Library/PrivilegedHelperTools/com.ithurtswhenip.helper
+chmod 544 /Library/PrivilegedHelperTools/com.ithurtswhenip.helper
 
-chown root:wheel /Library/LaunchDaemons/com.ipswitcher.helper.plist
-chmod 644 /Library/LaunchDaemons/com.ipswitcher.helper.plist
+chown root:wheel /Library/LaunchDaemons/com.ithurtswhenip.helper.plist
+chmod 644 /Library/LaunchDaemons/com.ithurtswhenip.helper.plist
 
 # Load and start the helper daemon
-launchctl load /Library/LaunchDaemons/com.ipswitcher.helper.plist
+launchctl load /Library/LaunchDaemons/com.ithurtswhenip.helper.plist
 
 exit 0
 POSTINSTALL_EOF
 
 chmod +x "${SCRIPTS_DIR}/postinstall"
 
+# --- Strip AppleDouble metadata files from payload ---
+# These ._ files get written when copying across filesystem boundaries that
+# don't preserve extended attributes natively. They aren't harmful but they
+# bloat the pkg and clutter the install footprint.
+find "${PAYLOAD_DIR}" -name "._*" -delete
+dot_clean -m "${PAYLOAD_DIR}" 2>/dev/null || true
+
 # --- Ad-hoc sign the app bundle ---
 echo "[6/7] Ad-hoc signing binaries..."
 codesign -s - --force --deep "${PAYLOAD_DIR}/Applications/${APP_NAME}.app"
-codesign -s - --force "${PAYLOAD_DIR}/Library/PrivilegedHelperTools/com.ipswitcher.helper"
+codesign -s - --force "${PAYLOAD_DIR}/Library/PrivilegedHelperTools/com.ithurtswhenip.helper"
 
 # --- Build the .pkg ---
 echo "[7/7] Building .pkg..."
 
+# --- Generate component plist to disable bundle relocation ---
+# Without this, pkgbuild defaults to relocatable bundles, which causes the
+# installer to silently no-op when the bundle id isn't already registered
+# with LaunchServices (e.g. first-time installs).
+COMPONENT_PLIST="${WORK_DIR}/component.plist"
+pkgbuild --analyze --root "${PAYLOAD_DIR}" "${COMPONENT_PLIST}"
+plutil -replace BundleIsRelocatable -bool NO "${COMPONENT_PLIST}"
+
 pkgbuild \
     --root "${PAYLOAD_DIR}" \
+    --component-plist "${COMPONENT_PLIST}" \
     --identifier "${PKG_ID}" \
     --version "${VERSION}" \
     --scripts "${SCRIPTS_DIR}" \

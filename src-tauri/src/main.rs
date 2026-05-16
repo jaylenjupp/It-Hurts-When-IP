@@ -148,7 +148,7 @@ fn send_to_helper(request: serde_json::Value) -> Result<String, String> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
 
-    let mut stream = UnixStream::connect("/var/run/com.ipswitcher.helper.sock")
+    let mut stream = UnixStream::connect("/var/run/com.ithurtswhenip.helper.sock")
         .map_err(|e| format!("Could not connect to helper: {}", e))?;
 
     let request_str = format!("{}\n", request.to_string());

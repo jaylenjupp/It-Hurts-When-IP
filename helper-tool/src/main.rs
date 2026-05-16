@@ -5,7 +5,7 @@ use std::fs;
 
 
 fn main() {
-    let socket_path = "/var/run/com.ipswitcher.helper.sock";
+    let socket_path = "/var/run/com.ithurtswhenip.helper.sock";
 
     if std::path::Path::new(socket_path).exists() {
         fs::remove_file(socket_path).ok();
