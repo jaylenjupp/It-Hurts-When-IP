@@ -1,0 +1,24 @@
+[package]
+name = "ithurtswhenip-service"
+version = "1.11.0"
+edition = "2021"
+
+[[bin]]
+name = "ithurtswhenip-service"
+path = "src/main.rs"
+
+[dependencies]
+windows-service = "0.7"
+windows-sys = { version = "0.52", features = [
+    "Win32_Storage_FileSystem",
+    "Win32_System_Pipes",
+    "Win32_Foundation",
+    "Win32_System_IO",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock"
+]}
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
