@@ -1,6 +1,6 @@
 ; -- It Hurts When IP Installer --
 #define AppName "It Hurts When IP"
-#define AppVersion "1.11.0"
+#define AppVersion "1.12.0"
 #define AppPublisher "Jaylen Jupp"
 #define AppExeName "ItHurtsWhenIP.exe"
 #define ServiceExeName "ithurtswhenip-service.exe"
