@@ -18,6 +18,61 @@ body::-webkit-scrollbar {
   display: none;
 }
 
+/* The custom titlebar block in HTML serves Windows, where Tauri's
+   decorations are turned off. On macOS we use the native titlebar, so
+   hide the block entirely. */
+body[data-platform="macos"] .titlebar {
+  display: none;
+}
+
+.titlebar {
+  height: 32px;
+  background-color: #1a1a1a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.titlebar-title {
+  flex: 1;
+  padding-left: 12px;
+  font-size: 12px;
+  color: #888;
+  letter-spacing: 0.02em;
+}
+
+.titlebar-buttons {
+  display: flex;
+  height: 100%;
+}
+
+.titlebar-btn {
+  width: 46px;
+  height: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+}
+
+.titlebar-btn:hover {
+  background-color: #2a2a2a;
+  color: #f0f0f0;
+}
+
+.titlebar-close:hover {
+  background-color: #c42b1c;
+  color: #fff;
+}
+
 .container {
   padding: 16px;
   display: flex;
@@ -26,6 +81,15 @@ body::-webkit-scrollbar {
   max-width: 800px;
   margin: 0 auto;
   min-height: 100vh;
+}
+
+body[data-platform="windows"] .container {
+  /* Windows uses a 32px custom titlebar at the top of the viewport.
+     Constrain to the remaining space so overflow-y: auto can kick in. */
+  min-height: calc(100vh - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .section {

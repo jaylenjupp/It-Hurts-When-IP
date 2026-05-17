@@ -1,4 +1,27 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { platform } from "@tauri-apps/plugin-os";
+
+const appWindow = getCurrentWindow();
+
+// Set <body data-platform="..."> so CSS can target macOS / Windows differences.
+// Tauri's platform() returns "macos", "windows", "linux", etc. We default to
+// "macos" on any failure since that's the more conservative path (uses native
+// titlebar, no custom chrome to break).
+(async () => {
+  try {
+    const p = await platform();
+    document.body.setAttribute("data-platform", p);
+  } catch {
+    document.body.setAttribute("data-platform", "macos");
+  }
+})();
+
+// Custom titlebar buttons only exist in the DOM when the platform needs them
+// (Windows). The optional chaining means this is a no-op on macOS, which uses
+// the native titlebar.
+document.getElementById("titlebar-minimize")?.addEventListener("click", () => appWindow.minimize());
+document.getElementById("titlebar-close")?.addEventListener("click", () => appWindow.close());
 
 const interfaceSelect = document.getElementById("interface-select");
 const statusBar = document.getElementById("status-bar");
@@ -109,7 +132,8 @@ function updateActiveButton(info) {
 
   for (const set of sets) {
     if (set.data && set.data.ip && info.ip === set.data.ip &&
-        info.subnet === set.data.subnet && info.gateway === set.data.gateway) {
+      info.subnet === set.data.subnet &&
+      normalizeGateway(info.gateway) === normalizeGateway(set.data.gateway)) {
       document.getElementById(set.el).classList.add("active-mode");
       display.style.borderLeftColor = "#0a84ff";
       return;
@@ -117,7 +141,8 @@ function updateActiveButton(info) {
   }
 
   if (previousIpInfo && info.ip === previousIpInfo.ip &&
-      info.subnet === previousIpInfo.subnet && info.gateway === previousIpInfo.gateway) {
+    info.subnet === previousIpInfo.subnet &&
+    normalizeGateway(info.gateway) === normalizeGateway(previousIpInfo.gateway)) {
     document.getElementById("prev-ip").classList.add("active-mode");
     display.style.borderLeftColor = "#0a84ff";
     return;
@@ -125,6 +150,45 @@ function updateActiveButton(info) {
 
   // No match — neutral border
   display.style.borderLeftColor = "#444";
+}
+
+// Treat "no gateway" variants as equivalent. macOS may return the gateway as
+// "—" when no router is configured; Windows returns "0.0.0.0" (no default
+// route). A quick set saved with "0.0.0.0" must still match either state.
+// Strict string equality fails that comparison; normalising both sides through
+// here doesn't.
+function normalizeGateway(g) {
+  if (!g) return "";
+  const t = String(g).trim();
+  if (t === "" || t === "—" || t === "0.0.0.0") return "";
+  return t;
+}
+
+// Polls get_ip_info until `predicate(info)` is true, or maxAttempts is hit.
+//
+// Why this exists: on Windows, the privileged service applies IP changes via
+// netsh, which returns the instant the change is queued. But our frontend
+// reads state back via PowerShell (Get-NetIPAddress / Get-NetIPInterface),
+// which queries a cache that lags by ~100-500ms. So an immediate read after a
+// write returns stale state, and updateActiveButton highlights the wrong
+// button until the user clicks something else.
+//
+// On macOS, networksetup reads and writes the same store — so the first poll
+// always satisfies the predicate and the function returns immediately. No
+// platform branching needed.
+async function waitForExpectedState(iface, predicate, opts = {}) {
+  const maxAttempts = opts.maxAttempts ?? 10;
+  const delayMs = opts.delayMs ?? 150;
+
+  let info = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    info = await loadIpInfo(iface);
+    if (predicate(info)) return { matched: true, info };
+    if (attempt < maxAttempts) {
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  return { matched: false, info };
 }
 
 interfaceSelect.addEventListener("change", () => {
@@ -192,7 +256,13 @@ document.getElementById("quick-set-1").addEventListener("click", async (e) => {
     });
     document.getElementById("prev-ip-subtitle").textContent = previousIpInfo.ip || "—";
     statusBar.textContent = result;
-    await loadIpInfo(iface);
+
+    await waitForExpectedState(iface, info =>
+      info.ip === quickSet1.ip &&
+      info.subnet === quickSet1.subnet &&
+      normalizeGateway(info.gateway) === normalizeGateway(quickSet1.gateway)
+    );
+
   } catch (error) {
     statusBar.textContent = "Error: " + error;
   }
@@ -217,7 +287,13 @@ document.getElementById("quick-set-2").addEventListener("click", async (e) => {
     });
     document.getElementById("prev-ip-subtitle").textContent = previousIpInfo.ip || "—";
     statusBar.textContent = result;
-    await loadIpInfo(iface);
+
+    await waitForExpectedState(iface, info =>
+      info.ip === quickSet2.ip &&
+      info.subnet === quickSet2.subnet &&
+      normalizeGateway(info.gateway) === normalizeGateway(quickSet2.gateway)
+    );
+    
   } catch (error) {
     statusBar.textContent = "Error: " + error;
   }
@@ -241,7 +317,13 @@ document.getElementById("quick-set-3").addEventListener("click", async (e) => {
       gateway: quickSet3.gateway,
     });
     statusBar.textContent = result;
-    await loadIpInfo(iface);
+
+    await waitForExpectedState(iface, info =>
+      info.ip === quickSet3.ip &&
+      info.subnet === quickSet3.subnet &&
+      normalizeGateway(info.gateway) === normalizeGateway(quickSet3.gateway)
+    );
+    
   } catch (error) {
     statusBar.textContent = "Error: " + error;
   }
@@ -265,7 +347,13 @@ document.getElementById("quick-set-4").addEventListener("click", async (e) => {
       gateway: quickSet4.gateway,
     });
     statusBar.textContent = result;
-    await loadIpInfo(iface);
+
+    await waitForExpectedState(iface, info =>
+      info.ip === quickSet4.ip &&
+      info.subnet === quickSet4.subnet &&
+      normalizeGateway(info.gateway) === normalizeGateway(quickSet4.gateway)
+    );
+    
   } catch (error) {
     statusBar.textContent = "Error: " + error;
   }
@@ -288,7 +376,13 @@ document.getElementById("prev-ip").addEventListener("click", async () => {
       gateway: previousIpInfo.gateway,
     });
     statusBar.textContent = result;
-    await loadIpInfo(iface);
+   
+    await waitForExpectedState(iface, info =>
+      info.ip === previousIpInfo.ip &&
+      info.subnet === previousIpInfo.subnet &&
+      normalizeGateway(info.gateway) === normalizeGateway(previousIpInfo.gateway)
+    );
+
   } catch (error) {
     statusBar.textContent = "Error: " + error;
   }
@@ -606,7 +700,13 @@ document.getElementById("manual-apply").addEventListener("click", async () => {
       ip, subnet, gateway,
     });
     statusBar.textContent = result;
-    await loadIpInfo(iface);
+    
+    await waitForExpectedState(iface, info =>
+      info.ip === ip &&
+      info.subnet === subnet &&
+      normalizeGateway(info.gateway) === normalizeGateway(gateway)
+    );
+
   } catch (error) {
     statusBar.textContent = "Error: " + error;
   }
