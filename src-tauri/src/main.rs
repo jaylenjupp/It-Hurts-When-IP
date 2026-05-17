@@ -151,6 +151,7 @@ fn get_last_interface(app: tauri::AppHandle) -> String {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_os::init())
         .invoke_handler(tauri::generate_handler![
             get_interfaces,
             get_ip_info,
@@ -161,6 +162,68 @@ fn main() {
             save_last_interface,
             get_last_interface,
         ])
+       .setup(|app| {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::Arc;
+
+            let window = app.get_webview_window("main").unwrap();
+            let config_dir = app.path().app_data_dir().unwrap();
+            let pos_path = config_dir.join("window_position.json");
+
+            // Save handler ignores events until restore is done. Without this
+            // gate, events firing during the initial window setup can
+            // overwrite our saved position before we get a chance to restore.
+            let ready_to_save = Arc::new(AtomicBool::new(false));
+
+            // Restore saved position on launch.
+            if pos_path.exists() {
+                if let Ok(data) = fs::read_to_string(&pos_path) {
+                    if let Ok(pos) = serde_json::from_str::<serde_json::Value>(&data) {
+                        let x = pos["x"].as_f64().unwrap_or(100.0) as i32;
+                        let y = pos["y"].as_f64().unwrap_or(100.0) as i32;
+                        window
+                            .set_position(tauri::Position::Physical(
+                                tauri::PhysicalPosition { x, y },
+                            ))
+                            .ok();
+                    }
+                }
+            }
+
+            // Open the gate after restore so subsequent moves and resizes
+            // (real user actions) get saved.
+            ready_to_save.store(true, Ordering::Relaxed);
+
+            // Save position on every move and resize. We write on both events
+            // because a resize via the window edges can shift the top-left
+            // corner without firing a Moved event, depending on which edge
+            // the user drags.
+            let window_clone = window.clone();
+            let config_dir_clone = config_dir.clone();
+            let ready_for_handler = ready_to_save.clone();
+            window.on_window_event(move |event| {
+                if !ready_for_handler.load(Ordering::Relaxed) {
+                    return;
+                }
+
+                let write_pos = |x: i32, y: i32| {
+                    let pos_path = config_dir_clone.join("window_position.json");
+                    fs::create_dir_all(&config_dir_clone).ok();
+                    let pos_data = serde_json::json!({ "x": x, "y": y });
+                    fs::write(&pos_path, pos_data.to_string()).ok();
+                };
+
+                if let tauri::WindowEvent::Moved(pos) = event {
+                    write_pos(pos.x, pos.y);
+                } else if let tauri::WindowEvent::Resized(_) = event {
+                    if let Ok(pos) = window_clone.outer_position() {
+                        write_pos(pos.x, pos.y);
+                    }
+                }
+            });
+
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
