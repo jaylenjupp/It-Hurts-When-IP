@@ -179,6 +179,19 @@ rm -f /var/run/com.ithurtswhenip.helper.sock 2>/dev/null || true
 # Remove old helper binary (will be replaced)
 rm -f /Library/PrivilegedHelperTools/com.ithurtswhenip.helper 2>/dev/null || true
 
+# Forget stale pkg receipts from earlier identifiers (for upgrades from
+# pre-rename installs). The original pkg was com.ipswitcher.pkg and the
+# helper had its own receipt at com.ipswitcher.helper. Without these,
+# macOS could carry old install metadata indefinitely.
+pkgutil --forget com.ipswitcher.pkg 2>/dev/null || true
+pkgutil --forget com.ipswitcher.helper 2>/dev/null || true
+
+# Remove the old app bundle before install. Without this, if the bundle
+# is already in /Applications and pkgbuild's relocation logic gets in any
+# weird state (as it did during the consolidation rename), the install
+# silently no-ops while reporting success. Belt and braces.
+rm -rf "/Applications/It Hurts When IP.app" 2>/dev/null || true
+
 exit 0
 PREINSTALL_EOF
 
