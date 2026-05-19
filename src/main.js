@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 const appWindow = getCurrentWindow();
 
@@ -718,6 +719,112 @@ document.getElementById("manual-apply").addEventListener("click", async () => {
   });
 });
 
+// --- Update modal ---
+
+const updateModal = {
+  overlay: null,
+  current: null,
+  latest: null,
+  closeBtn: null,
+  changelogBtn: null,
+  downloadBtn: null,
+
+  init() {
+    this.overlay = document.getElementById("update-modal-overlay");
+    this.current = document.getElementById("update-modal-current");
+    this.latest = document.getElementById("update-modal-latest");
+    this.closeBtn = document.getElementById("update-modal-close");
+    this.changelogBtn = document.getElementById("update-modal-changelog");
+    this.downloadBtn = document.getElementById("update-modal-download");
+
+    this.closeBtn.addEventListener("click", () => this.dismiss());
+    this.changelogBtn.addEventListener("click", () => {
+      if (this._releaseUrl) openUrl(this._releaseUrl);
+    });
+    this.downloadBtn.addEventListener("click", () => {
+      if (this._downloadUrl) {
+        openUrl(this._downloadUrl);
+      } else if (this._releaseUrl) {
+        openUrl(this._releaseUrl);
+      }
+    });
+  },
+
+  show(info) {
+    this.current.textContent = "v" + info.current_version;
+    this.latest.textContent = "v" + info.latest_version;
+    this._releaseUrl = info.release_url;
+    this._downloadUrl = info.download_url;
+
+    // Hide the Download button if there's no installer asset attached
+    this.downloadBtn.style.display = info.download_url ? "" : "none";
+
+    this.overlay.classList.remove("hidden");
+  },
+
+  async dismiss() {
+    this.overlay.classList.add("hidden");
+    try {
+      await window.__TAURI__.core.invoke("dismiss_update_prompt");
+    } catch (e) {
+      console.error("[dismiss_update_prompt failed]", e);
+    }
+  },
+};
+
+// Initialize once the DOM is ready
+document.addEventListener("DOMContentLoaded", () => updateModal.init());
+
 // These two must always be last
 loadInterfaces();
 loadQuickSets();
+
+// --- Launch-time update check ---
+//
+// Runs after a short delay so it doesn't compete with the rest of the app's
+// startup (loading interfaces, restoring last-used interface, etc).
+//
+// Network call always happens — catches the "no internet on first launch
+// of the day, internet on second launch" case.
+//
+// Popup suppression is separate: if the user dismissed the popup within
+// the last 24 hours, we silently skip showing it even if there's an update.
+
+const POPUP_SUPPRESSION_WINDOW_SECS = 24 * 60 * 60;
+const LAUNCH_CHECK_DELAY_MS = 1000;
+
+async function runLaunchUpdateCheck() {
+  const { invoke } = window.__TAURI__.core;
+
+  try {
+    const info = await invoke("check_for_update");
+
+    // No update available → nothing to do
+    if (!info.update_available) {
+      return;
+    }
+
+    // Update available — check whether the user dismissed it recently
+    const dismissedAt = await invoke("get_update_prompt_dismissed_at");
+    if (dismissedAt !== null && dismissedAt !== undefined) {
+      const nowSecs = Math.floor(Date.now() / 1000);
+      if (nowSecs - dismissedAt < POPUP_SUPPRESSION_WINDOW_SECS) {
+        // Within the suppression window — silently skip
+        return;
+      }
+    }
+
+    // Show the popup
+    updateModal.show(info);
+  } catch (e) {
+    // Silent failure — no internet, GitHub down, repo private, etc.
+    // Console-log for dev visibility; in release, this is invisible to users.
+    console.warn("[update check failed]", e);
+  }
+}
+
+// Wait for DOM ready, then add a small delay so we don't run during the
+// initial render flurry.
+document.addEventListener("DOMContentLoaded", () => {
+  setTimeout(runLaunchUpdateCheck, LAUNCH_CHECK_DELAY_MS);
+});

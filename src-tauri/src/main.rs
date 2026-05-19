@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 mod platform;
+mod update;
 
 // --- Persistent config ---
 
@@ -25,6 +26,8 @@ struct AppConfig {
     quick_set_2: QuickSetProfile,
     quick_set_3: QuickSetProfile,
     quick_set_4: QuickSetProfile,
+    #[serde(default)]
+    pub update_prompt_dismissed_at: Option<i64>,
 }
 
 impl Default for AppConfig {
@@ -40,6 +43,7 @@ impl Default for AppConfig {
             quick_set_2: blank("Quick Set 2"),
             quick_set_3: blank("Quick Set 3"),
             quick_set_4: blank("Quick Set 4"),
+            update_prompt_dismissed_at: None,
         }
     }
 }
@@ -147,11 +151,35 @@ fn get_last_interface(app: tauri::AppHandle) -> String {
     String::new()
 }
 
+#[tauri::command]
+async fn check_for_update() -> Result<update::UpdateInfo, String> {
+    update::check_for_update().await
+}
+
+#[tauri::command]
+fn dismiss_update_prompt(app: tauri::AppHandle) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("system clock error: {}", e))?
+        .as_secs() as i64;
+
+    let mut config = load_config(&app);
+    config.update_prompt_dismissed_at = Some(now);
+    save_config(&app, &config);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_update_prompt_dismissed_at(app: tauri::AppHandle) -> Option<i64> {
+    load_config(&app).update_prompt_dismissed_at
+}
+
 // --- Entrypoint ---
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_interfaces,
             get_ip_info,
@@ -161,6 +189,9 @@ fn main() {
             save_quick_set,
             save_last_interface,
             get_last_interface,
+            check_for_update,
+            dismiss_update_prompt,
+            get_update_prompt_dismissed_at,
         ])
        .setup(|app| {
             use std::sync::atomic::{AtomicBool, Ordering};

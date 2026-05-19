@@ -162,5 +162,32 @@
     </div>
 
     <script src="main.js" type="module"></script>
+
+    <!-- Update available modal -->
+    <div id="update-modal-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="update-modal-title">
+      <div id="update-modal">
+        <div id="update-modal-header">
+          <img src="/app-icon.png" alt="" id="update-modal-icon" />
+          <h2 id="update-modal-title">New version available</h2>
+        </div>
+
+        <div id="update-modal-versions">
+          <div class="version-row">
+            <span class="version-label">Current version:</span>
+            <span class="version-value" id="update-modal-current">—</span>
+          </div>
+          <div class="version-row">
+            <span class="version-label">Latest version:</span>
+            <span class="version-value" id="update-modal-latest">—</span>
+          </div>
+        </div>
+
+        <div id="update-modal-buttons">
+          <button id="update-modal-close">Close</button>
+          <button id="update-modal-changelog">Changelog</button>
+          <button id="update-modal-download" class="primary">Download</button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>
