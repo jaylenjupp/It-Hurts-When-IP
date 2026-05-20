@@ -83,13 +83,29 @@ body[data-platform="macos"] .titlebar {
   min-height: 100vh;
 }
 
+.container::-webkit-scrollbar {
+  width: 0px;
+  height: 0px;
+}
+
+/* Windows: fixed window, scroll inside .container. The old Windows build
+   proved an EXPLICIT height (not min/max) is required, plus flex-shrink:0 on
+   the children — otherwise the flex column stays sizing-ambiguous, the kids
+   compress to fit, and overflow-y never engages. */
+body[data-platform="windows"] {
+  height: 100vh;
+  overflow: hidden;
+}
+
 body[data-platform="windows"] .container {
-  /* Windows uses a 32px custom titlebar at the top of the viewport.
-     Constrain to the remaining space so overflow-y: auto can kick in. */
-  min-height: calc(100vh - 32px);
-  max-height: calc(100vh - 32px);
+  height: calc(100vh - 32px);
+  min-height: 0;            /* cancel the base .container min-height:100vh */
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+body[data-platform="windows"] .container > * {
+  flex-shrink: 0;
 }
 
 .section {
