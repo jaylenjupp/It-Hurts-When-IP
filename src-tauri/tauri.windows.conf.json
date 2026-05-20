@@ -2,6 +2,16 @@
   "app": {
     "windows": [
       {
+        "title": "It Hurts When IP",
+        "width": 480,
+        "height": 580,
+        "minWidth": 480,
+        "minHeight": 580,
+        "maxWidth": 800,
+        "resizable": true,
+        "fullscreen": false,
+        "maximizable": false,
+        "center": false,
         "decorations": false,
         "devtools": false
       }
