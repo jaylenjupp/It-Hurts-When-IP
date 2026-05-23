@@ -174,6 +174,31 @@ fn get_update_prompt_dismissed_at(app: tauri::AppHandle) -> Option<i64> {
     load_config(&app).update_prompt_dismissed_at
 }
 
+// Whether the saved top-left (x, y) lands on a monitor connected *right now*.
+//
+// Works on both platforms because the saved coords and the monitor rects come
+// from the same Tauri physical-pixel coordinate space — so the comparison is
+// valid regardless of each OS's native origin convention. The margins keep the
+// titlebar grabbable instead of flush against a far/bottom edge.
+fn position_on_connected_monitor(window: &tauri::WebviewWindow, x: i32, y: i32) -> bool {
+    let monitors = match window.available_monitors() {
+        Ok(m) if !m.is_empty() => m,
+        _ => return false, // no monitor info → don't risk an off-screen restore
+    };
+    for m in monitors {
+        let p = m.position();
+        let s = m.size();
+        let left = p.x;
+        let top = p.y;
+        let right = p.x + s.width as i32;
+        let bottom = p.y + s.height as i32;
+        if x >= left && x <= right - 80 && y >= top && y <= bottom - 40 {
+            return true;
+        }
+    }
+    false
+}
+
 // --- Entrypoint ---
 
 fn main() {
@@ -193,7 +218,8 @@ fn main() {
             dismiss_update_prompt,
             get_update_prompt_dismissed_at,
         ])
-       .setup(|app| {
+
+        .setup(|app| {
             use std::sync::atomic::{AtomicBool, Ordering};
             use std::sync::Arc;
 
@@ -201,34 +227,36 @@ fn main() {
             let config_dir = app.path().app_data_dir().unwrap();
             let pos_path = config_dir.join("window_position.json");
 
-            // Save handler ignores events until restore is done. Without this
-            // gate, events firing during the initial window setup can
-            // overwrite our saved position before we get a chance to restore.
+            // Ignore window events until restore is done, so startup events can't
+            // overwrite the saved position before we read it.
             let ready_to_save = Arc::new(AtomicBool::new(false));
 
-            // Restore saved position on launch.
+            // Restore the saved position — but only if it still falls on a monitor
+            // connected right now. If the last display is gone (undocked laptop,
+            // swapped monitor) or it's the Windows minimize sentinel, restoring would
+            // drop the window into empty space, so we centre instead.
             if pos_path.exists() {
                 if let Ok(data) = fs::read_to_string(&pos_path) {
                     if let Ok(pos) = serde_json::from_str::<serde_json::Value>(&data) {
                         let x = pos["x"].as_f64().unwrap_or(100.0) as i32;
                         let y = pos["y"].as_f64().unwrap_or(100.0) as i32;
-                        window
-                            .set_position(tauri::Position::Physical(
-                                tauri::PhysicalPosition { x, y },
-                            ))
-                            .ok();
+                        if position_on_connected_monitor(&window, x, y) {
+                            window
+                                .set_position(tauri::Position::Physical(
+                                    tauri::PhysicalPosition { x, y },
+                                ))
+                                .ok();
+                        } else {
+                            window.center().ok();
+                        }
                     }
                 }
             }
 
-            // Open the gate after restore so subsequent moves and resizes
-            // (real user actions) get saved.
             ready_to_save.store(true, Ordering::Relaxed);
 
-            // Save position on every move and resize. We write on both events
-            // because a resize via the window edges can shift the top-left
-            // corner without firing a Moved event, depending on which edge
-            // the user drags.
+            // Persist position on move and resize (a resize via the edges can shift the
+            // top-left without firing Moved, depending on which edge is dragged).
             let window_clone = window.clone();
             let config_dir_clone = config_dir.clone();
             let ready_for_handler = ready_to_save.clone();
@@ -238,6 +266,11 @@ fn main() {
                 }
 
                 let write_pos = |x: i32, y: i32| {
+                    // Never persist the off-screen/minimized sentinel (-32000 on
+                    // Windows), or we'd try to restore off-screen next launch.
+                    if x <= -10000 || y <= -10000 {
+                        return;
+                    }
                     let pos_path = config_dir_clone.join("window_position.json");
                     fs::create_dir_all(&config_dir_clone).ok();
                     let pos_data = serde_json::json!({ "x": x, "y": y });
@@ -255,6 +288,7 @@ fn main() {
 
             Ok(())
         })
+
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
