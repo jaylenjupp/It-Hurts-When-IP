@@ -30,7 +30,7 @@ export COPYFILE_DISABLE=1
 
 APP_NAME="It Hurts When IP"
 PKG_ID="com.ithurtswhenip.pkg"
-VERSION="1.13.0"
+VERSION="1.13.1"
 OUTPUT_PKG="ItHurtsWhenIP-${VERSION}.pkg"
 
 # --- Paths to your pre-built binaries ---
