@@ -4,7 +4,7 @@
 
 <h1 align="center">It Hurts When IP</h1>
 
-<p align="center"><em>A desktop tool for switching between saved network IP configurations — quickly, and without re-entering your password every single time.</em></p>
+<p align="center"><em>A desktop tool for switching between manual or saved network IP configurations — quickly, and without re-entering your password every single time.</em></p>
 
 <p align="center">Yes, the name is a pun. No, we're not going to explain it.</p>
 
@@ -20,7 +20,7 @@
 
 If your work involves regularly moving a machine between networks — swapping between a static lab address, a client subnet, and DHCP, for example — you know the routine: open Network settings, retype the same IP details, confirm, authenticate. Every single time.
 
-**It Hurts When IP** keeps your network configurations saved and lets you switch between them in one click. The actual network changes are applied by a small privileged helper that runs in the background, so you authenticate **once** at install time and never get a prompt for routine switches afterward. It's a native desktop app built with Tauri 2 (a Rust backend with a lightweight web frontend).
+**It Hurts When IP** keeps your network configurations saved and lets you switch between them in one click. The actual network changes are applied by a small privileged helper that runs in the background, so you authenticate **once** at install time and never get a prompt for routine switches afterward.
 
 It runs on both **macOS** and **Windows** from this single repository. macOS is the original, more mature platform; Windows support was added more recently.
 
