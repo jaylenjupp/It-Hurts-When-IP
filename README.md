@@ -32,7 +32,7 @@ It runs on both **macOS** and **Windows** from this single repository. macOS is 
 2. Download the `.pkg` installer.
 3. Double-click it and follow the prompts. This will not initially work due to it being a unknown publisher. Click cancel, do not delete the installer in this step.
 4. Open Settings and navigate to "Privacy & Security", and click open anyways on the prompt refering to ItHurtsWhenIP. 
-5. It will promped yoy again to open anyways. You'll be asked for your password **once** — this lets the installer set up the privileged helper daemon that performs network changes.
+5. It will promped you again to open anyways. You'll be asked for your password **once** — this lets the installer set up the privileged helper daemon that performs network changes.
 6. That's it. The app is installed to `/Applications` and the helper is configured automatically.
 
 ### Windows
