@@ -21,6 +21,13 @@ git config core.hooksPath .githooks    # local .git/config only, not versioned
   Recorded in `.claude/settings.json` → `enabledPlugins` (both v1.0.1). Check with `claude plugin list` (Mac Studio, repo root). In a running session, `/reload-plugins` loads them.
 - Read-only `networksetup` fixtures captured to `tools/fake-networksetup/fixtures/mac-studio/`. Its `README.md` has the commands and redaction rules.
 - **Nothing installed** via Homebrew, rustup or npm. The newest Homebrew keg is from 10 Nov, the x86_64 Rust target from 7 Nov, and `node_modules/` from May.
+- `origin` switched from SSH to HTTPS (this Mac has no GitHub SSH key; `gh` holds the login). Run by the owner:
+  ```bash
+  # Mac Studio, repo root
+  git remote set-url origin https://github.com/jaylenjupp/it-hurts-when-ip.git
+  gh auth setup-git        # global git config: gh becomes the GitHub credential helper
+  git push -u origin dev
+  ```
 - After this doc: the kit is committed on `dev`, `git push -u origin dev` runs, and a `release-dev.sh --dry-run` proves the release path. Results are in `docs/PROGRESS.md`.
 
 ## 2. Toolchain (verified 2026-11-13, Mac Studio)
