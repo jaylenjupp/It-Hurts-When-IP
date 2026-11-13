@@ -1,0 +1,6 @@
+An asterisk (*) denotes that a network service is disabled.
+USB 10/100/1000 LAN
+Dante Primary
+Wi-Fi
+Thunderbolt Bridge
+*Old Adapter

@@ -30,3 +30,7 @@ ehthumbs.db
 desktop.ini
 .DS_Store
 .DS_Store
+
+# Release build outputs + local-only Claude Code settings
+release-out/
+.claude/settings.local.json
