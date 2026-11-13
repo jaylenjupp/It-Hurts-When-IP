@@ -1,7 +1,7 @@
 # Build outputs
 src-tauri/target/
 helper-tool/target/
-service-tool/target/
+platforms-parked/windows/service-tool/target/
 dist/
 node_modules/
 
@@ -28,8 +28,6 @@ helper-tool/com.ithurtswhenip.helper
 Thumbs.db
 ehthumbs.db
 desktop.ini
-.DS_Store
-.DS_Store
 
 # Release build outputs + local-only Claude Code settings
 release-out/

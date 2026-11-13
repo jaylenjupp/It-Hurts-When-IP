@@ -1,15 +1,29 @@
 # Progress
-- Current phase: 0 (not started) — setup session done 2026-11-13
+- Current phase: 0 (in progress) — Phase 0 + 1 plan approved by Jay 2026-11-13 (decisions D1–D11 below)
 - Last committed package: Setup (`chore: add Claude Code kit and dev tooling`, first commit on `dev` after `main` @ 20b1ec9) — see `docs/SETUP.md`
-- In progress: —
-- Next step: `/clear`, then run `claude-kit/prompts/02-kickoff.md`
+- In progress: 0.1 Park Windows + housekeeping
+- Next step: 0.2 CommandRunner + parsers + fake alignment
+- Package order: 0.1 park Windows · 0.2 CommandRunner/parsers · 0.3 build stamp · 0.4 build-macos.sh + verify-pkg.sh · 0.5 Phase 0 draft · 1.1 rescue core + tests · 1.2 network revert + menu + wait-pid · 1.3 bundle script, retire old uninstallers · 1.4 in-app Uninstall… · 1.5 Phase 1 draft
+- Decisions approved 2026-11-13 (kickoff plan):
+  - D1 Windows parked under `platforms-parked/windows/` (`service-tool/`, `installer-iss/`, `platform/windows.rs`, `tauri.windows.conf.json`); Windows titlebar JS/CSS in `src/` stays
+  - D2 untrack the 4 `.DS_Store` files; delete root `Uninstall Script.command` in package 1.3
+  - D3 app-side `sh -c` removed now (falls out of `CommandRunner`); disabled `*Name` services hidden from the dropdown
+  - D4 debug builds never open the helper socket (with `IHWIP_NETWORKSETUP` set, writes go to the fake; otherwise refused) — v1.13.1 and its root helper are installed and running on the Mac Studio
+  - D5 rescue CLI: `--plan`/`--dry-run`, `--uninstall`, repeatable `--network leave|restore-journal|dhcp:"<service>"`, `--yes`, `--wait-pid`, `--log`; exit 0 ok / 1 partial / 2 refused; `--repair` rejected until Phase 3
+  - D6 backups in `/Users/Shared/ItHurtsWhenIP-backups/<UTC ts>/` (plists, logs, journal, per-user Application Support, network snapshot, plan, log); app bundle, helper binary, Caches/WebKit are not backed up
+  - D7 journal schema 1: `{"schema":1,"services":[{"service","recorded_at","getinfo","dns","search"}]}`, raw text strings, no nulls — Phase 2 writer must match
+  - D8 in-app uninstall: fixed AppleScript + argv via `osascript`, two stages (A while app open, B after it quits); first real run is Jay's on the travel Mac
+  - D9 pkg `preinstall` also stops/removes a legacy `com.ipswitcher.helper`
+  - D10 `.claude/settings.json`: allow `./recovery/tests/run-tests.sh`, deny absolute-path `networksetup` writes (done)
+  - D11 both drafts stay 1.13.1; publish as v1.14.0 decided at end of Phase 1
+- Extra uninstall inventory found on the Mac Studio (read-only search): per-user `com.ithurtswhenip.app`, `com.ithurtswhenip.switcher`, `com.ipswitcher.app`, `com.ipswitcher.switcher`, `it-hurts-when-ip` under `~/Library/{Caches,WebKit}`, `~/Library/Preferences/it-hurts-when-ip.plist`; legacy socket `/var/run/com.ipswitcher.helper.sock` (from git history)
 - Latest draft build: — (release path proven with `release-dev.sh --dry-run` only)
 - Notes / open decisions:
   - Travel test Mac's macOS version (sets minimumSystemVersion floor) — ask Jay
   - Advanced-mode feature list — decide at start of Phase 4
   - Publish Phase 1 to colleagues immediately as v1.14.0, or after Phase 2 — decide at end of Phase 1
   - `tmux` is not installed on the Mac Studio — decided 2026-11-13: not needed, Jay leaves Terminal open while travelling (skip the `tmux` lines in `docs/REMOTE-SETUP.md` §4)
-  - `shellcheck` not installed (optional; pre-commit skips shell lint without it) — `brew install shellcheck` needs Jay's OK; wanted by Phase 1 acceptance
+  - `shellcheck` is installed (`/opt/homebrew/bin/shellcheck`, seen 2026-11-13) — pre-commit now lints staged shell files
   - `claude-kit/repo-seed/` removed 2026-11-13 with Jay's OK (the root copies are the live ones; `claude-kit/README.md` and `prompts/01-setup.md` still mention it as setup history)
   - Tracked `.DS_Store` files (root, `icon/`, `src-tauri/`) keep dirtying the tree despite `.gitignore`; untracking (`git rm --cached`) needs Jay's OK
   - Home LAN subnet + two service names are still in `dev` history (`aaa88da`, masked in `b37c332`) — decided 2026-11-13: scrub in Phase 8; settle merge ordering at the start of Phase 7 (see PLAN)

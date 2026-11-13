@@ -128,6 +128,8 @@ The macOS bundle identifier is `com.ithurtswhenip.desktop`.
 
 ### Windows
 
+> **Windows is parked this round** while the macOS version is refined: the Windows code lives in `platforms-parked/windows/`, is unmaintained, and must be restored before it will build (see [`platforms-parked/windows/README.md`](platforms-parked/windows/README.md)).
+
 The distributable is a single `.exe` built with [Inno Setup 6](https://jrsoftware.org/isinfo.php) — this installer is what registers and starts the privileged service. (Tauri's bundler also auto-produces an `.msi` and an NSIS `_x64-setup.exe`; these are **not** used for distribution.)
 
 1. Build the app:
@@ -136,13 +138,13 @@ The distributable is a single `.exe` built with [Inno Setup 6](https://jrsoftwar
    ```
 2. Build the privileged service in **release** mode — the installer script consumes the release binary:
    ```powershell
-   cd service-tool
+   cd platforms-parked\windows\service-tool
    cargo build --release
-   cd ..
+   cd ..\..\..
    ```
 3. Compile the installer with Inno Setup:
    ```powershell
-   & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "installer-iss\installer.iss"
+   & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "platforms-parked\windows\installer-iss\installer.iss"
    ```
    (If Inno Setup was installed system-wide rather than per-user, `ISCC.exe` is instead under `C:\Program Files (x86)\Inno Setup 6\`.)
 

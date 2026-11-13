@@ -5,7 +5,7 @@
   "identifier": "com.ithurtswhenip.desktop",
   "build": {
     "beforeDevCommand": "npx vite",
-    "beforeBuildCommand": "npx vite build",
+    "beforeBuildCommand": "npm run build:web",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../dist"
   },

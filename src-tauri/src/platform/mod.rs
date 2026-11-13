@@ -7,7 +7,5 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::*;
 
-#[cfg(target_os = "windows")]
-mod windows;
-#[cfg(target_os = "windows")]
-pub use windows::*;
+// Windows is parked this round: its module lives in platforms-parked/windows/
+// (see the README there for how to restore it).
