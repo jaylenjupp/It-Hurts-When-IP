@@ -12,6 +12,7 @@
   - `shellcheck` not installed (optional; pre-commit skips shell lint without it) — `brew install shellcheck` needs Jay's OK; wanted by Phase 1 acceptance
   - `claude-kit/repo-seed/` duplicates the root kit files — remove only with Jay's OK
   - Tracked `.DS_Store` files (root, `icon/`, `src-tauri/`) keep dirtying the tree despite `.gitignore`; untracking (`git rm --cached`) needs Jay's OK
+  - Home LAN subnet + two service names are still in `dev` history (`aaa88da`, masked in `b37c332`) — decided 2026-11-13: scrub in Phase 8; settle merge ordering at the start of Phase 7 (see PLAN)
   - Stale root `Uninstall Script.command` (old `com.ipswitcher` ids) — remove in Phase 1, not before
 - Findings from setup to pick up in Phase 0/2:
   - Real `networksetup -getinfo <unknown>` exits 4 and reports on **stdout** (two lines); the fake exits 1 — align the fake, and never rely on stderr alone (audit item 4)

@@ -150,13 +150,36 @@ Every phase ends with a **draft release** (see `docs/RELEASING.md`) and a "what 
 
 **Deliverables**
 - Version bump, CHANGELOG entry, README update (uninstall/rescue instructions), release notes for colleagues.
-- Merge `dev` → `main`, published release `vX.Y.Z` with `.pkg` + rescue script (each step owner-approved).
+- Merge `dev` → `main`, published release `vX.Y.Z` with `.pkg` + rescue script (each step owner-approved). Before merging, settle the Phase 8 ordering note (squash-merge, or scrub `dev`'s history first) so the unmasked setup commit doesn't reach `main`.
 
 **Acceptance**
 - [ ] All tests, clippy, `verify-pkg.sh` pass on the release commit
 - [ ] Owner has run install → quick sets → repair soft → uninstall on the travel Mac with the RC build
 - [ ] Published release visible at `https://api.github.com/repos/jaylenjupp/it-hurts-when-ip/releases/latest` with the new tag
 - [ ] A v1.13.1 install sees the update prompt (owner-checked)
+
+---
+
+## Phase 8 — Privacy scrub of the repo and its history
+**Skills:** build-release
+
+Background: the setup commit `aaa88da` on `dev` was pushed with the Mac Studio's home LAN subnet and two product-specific service names in `tools/fake-networksetup/fixtures/mac-studio/`. They were masked in `b37c332`, but remain in `dev`'s history. This phase clears those and anything similar that got through since.
+
+**Deliverables**
+- Sweep of the working tree **and** full history of every branch for: private/public IPv4 and IPv6 addresses that aren't documentation ranges or obvious show-network examples, MAC addresses, hostnames, personal device/service names, usernames/home paths, email addresses. Findings listed for the owner before anything is changed.
+- Current files fixed with normal commits (same substitution rules as `fixtures/mac-studio/README.md`).
+- History rewrite plan (which commits, which branches, what gets replaced), shown as a dry run. The rewrite itself and every force-push are **owner-run** (force-push is denied to Claude in `.claude/settings.json`); a backup of the pre-rewrite refs is kept locally until the owner confirms.
+- Draft releases whose target commits disappear are listed; delete/recreate only with the owner's OK.
+- A repeatable check (script or hook step) so future fixture captures can't reintroduce these values.
+
+**Acceptance**
+- [ ] `git grep` for the agreed patterns over `$(git rev-list --all)` returns nothing
+- [ ] Owner has force-pushed the rewritten branch(es); `git ls-remote origin` matches local
+- [ ] Published release tags (`vX.Y.Z`) still resolve and `/releases/latest` is unchanged
+- [ ] The repeatable check fails on a fixture containing a real-looking MAC or private subnet (test) and passes on the repo
+- [ ] Owner informed that GitHub can keep serving old commits by hash for a while, and whether a GitHub Support purge was requested (owner's call)
+
+**Ordering note:** if Phase 7 merges `dev` into `main` with a normal merge, the unmasked commit lands on `main` too and this phase then has to rewrite `main`. Either squash-merge in Phase 7, or run this phase's history rewrite before that merge — decide with the owner at the start of Phase 7.
 
 ---
 
