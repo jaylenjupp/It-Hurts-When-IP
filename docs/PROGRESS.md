@@ -10,7 +10,7 @@
   - Publish Phase 1 to colleagues immediately as v1.14.0, or after Phase 2 — decide at end of Phase 1
   - `tmux` is not installed on the Mac Studio — decided 2026-11-13: not needed, Jay leaves Terminal open while travelling (skip the `tmux` lines in `docs/REMOTE-SETUP.md` §4)
   - `shellcheck` not installed (optional; pre-commit skips shell lint without it) — `brew install shellcheck` needs Jay's OK; wanted by Phase 1 acceptance
-  - `claude-kit/repo-seed/` duplicates the root kit files — remove only with Jay's OK
+  - `claude-kit/repo-seed/` removed 2026-11-13 with Jay's OK (the root copies are the live ones; `claude-kit/README.md` and `prompts/01-setup.md` still mention it as setup history)
   - Tracked `.DS_Store` files (root, `icon/`, `src-tauri/`) keep dirtying the tree despite `.gitignore`; untracking (`git rm --cached`) needs Jay's OK
   - Home LAN subnet + two service names are still in `dev` history (`aaa88da`, masked in `b37c332`) — decided 2026-11-13: scrub in Phase 8; settle merge ordering at the start of Phase 7 (see PLAN)
   - Stale root `Uninstall Script.command` (old `com.ipswitcher` ids) — remove in Phase 1, not before
