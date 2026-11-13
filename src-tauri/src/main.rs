@@ -119,7 +119,12 @@ fn save_quick_set(
     gateway: String,
 ) -> Result<String, String> {
     let mut config = load_config(&app);
-    let profile = QuickSetProfile { name, ip, subnet, gateway };
+    let profile = QuickSetProfile {
+        name,
+        ip,
+        subnet,
+        gateway,
+    };
     match slot {
         1 => config.quick_set_1 = profile,
         2 => config.quick_set_2 = profile,
@@ -140,7 +145,10 @@ fn save_last_interface(app: tauri::AppHandle, interface: String) {
 
 #[tauri::command]
 fn get_last_interface(app: tauri::AppHandle) -> String {
-    let path = get_config_path(&app).parent().unwrap().join("last_interface.json");
+    let path = get_config_path(&app)
+        .parent()
+        .unwrap()
+        .join("last_interface.json");
     if path.exists() {
         if let Ok(data) = fs::read_to_string(&path) {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
@@ -218,7 +226,6 @@ fn main() {
             dismiss_update_prompt,
             get_update_prompt_dismissed_at,
         ])
-
         .setup(|app| {
             use std::sync::atomic::{AtomicBool, Ordering};
             use std::sync::Arc;
@@ -242,9 +249,10 @@ fn main() {
                         let y = pos["y"].as_f64().unwrap_or(100.0) as i32;
                         if position_on_connected_monitor(&window, x, y) {
                             window
-                                .set_position(tauri::Position::Physical(
-                                    tauri::PhysicalPosition { x, y },
-                                ))
+                                .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+                                    x,
+                                    y,
+                                }))
                                 .ok();
                         } else {
                             window.center().ok();
@@ -288,7 +296,6 @@ fn main() {
 
             Ok(())
         })
-
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

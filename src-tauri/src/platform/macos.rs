@@ -105,8 +105,8 @@ fn send_to_helper(request: serde_json::Value) -> Result<String, String> {
         .read_line(&mut response)
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
-    let parsed: serde_json::Value = serde_json::from_str(response.trim())
-        .map_err(|e| format!("Invalid response: {}", e))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(response.trim()).map_err(|e| format!("Invalid response: {}", e))?;
 
     if let Some(ok) = parsed["ok"].as_str() {
         Ok(ok.to_string())
