@@ -17,5 +17,5 @@
   - Real `networksetup -getinfo <unknown>` exits 4 and reports on **stdout** (two lines); the fake exits 1 — align the fake, and never rely on stderr alone (audit item 4)
   - Fake doesn't seed an existing empty `IHWIP_FAKE_STATE` dir (silent empty list, exit 0) — seed when `services.txt` is missing
   - `IHWIP_NETWORKSETUP` should be an absolute path (`$PWD/tools/...`); `tauri dev` may not run from the repo root
-  - Real fixtures in `tools/fake-networksetup/fixtures/mac-studio/` show parser edge cases (`Tailscale` has no config header; `Ethernet Address: (null)`; DHCP header with no IP lines)
+  - Real fixtures in `tools/fake-networksetup/fixtures/mac-studio/` show parser edge cases (the VPN service has no config header; `Ethernet Address: (null)`; DHCP header with no IP lines)
   - `.claude/settings.json` deny rules match bare `networksetup -set*` only, not `/usr/sbin/networksetup …` — consider tightening (owner-approved edit)

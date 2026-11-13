@@ -2,9 +2,9 @@ An asterisk (*) denotes that a network service is disabled.
 Ethernet
 Wi-Fi
 LAN USB Port
-ADAM AUDIO A7V (R)
+USB Audio Device (R)
 USB 10/100/1000 LAN
 RNDIS/Ethernet Gadget
 iPhone USB
 Thunderbolt Bridge
-Tailscale
+VPN Service
