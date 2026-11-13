@@ -1,0 +1,21 @@
+# Progress
+- Current phase: 0 (not started) — setup session done 2026-11-13
+- Last committed package: Setup (`chore: add Claude Code kit and dev tooling`, first commit on `dev` after `main` @ 20b1ec9) — see `docs/SETUP.md`
+- In progress: —
+- Next step: `/clear`, then run `claude-kit/prompts/02-kickoff.md`
+- Latest draft build: — (release path proven with `release-dev.sh --dry-run` only)
+- Notes / open decisions:
+  - Travel test Mac's macOS version (sets minimumSystemVersion floor) — ask Jay
+  - Advanced-mode feature list — decide at start of Phase 4
+  - Publish Phase 1 to colleagues immediately as v1.14.0, or after Phase 2 — decide at end of Phase 1
+  - `tmux` is not installed on the Mac Studio — decided 2026-11-13: not needed, Jay leaves Terminal open while travelling (skip the `tmux` lines in `docs/REMOTE-SETUP.md` §4)
+  - `shellcheck` not installed (optional; pre-commit skips shell lint without it) — `brew install shellcheck` needs Jay's OK; wanted by Phase 1 acceptance
+  - `claude-kit/repo-seed/` duplicates the root kit files — remove only with Jay's OK
+  - Tracked `.DS_Store` files (root, `icon/`, `src-tauri/`) keep dirtying the tree despite `.gitignore`; untracking (`git rm --cached`) needs Jay's OK
+  - Stale root `Uninstall Script.command` (old `com.ipswitcher` ids) — remove in Phase 1, not before
+- Findings from setup to pick up in Phase 0/2:
+  - Real `networksetup -getinfo <unknown>` exits 4 and reports on **stdout** (two lines); the fake exits 1 — align the fake, and never rely on stderr alone (audit item 4)
+  - Fake doesn't seed an existing empty `IHWIP_FAKE_STATE` dir (silent empty list, exit 0) — seed when `services.txt` is missing
+  - `IHWIP_NETWORKSETUP` should be an absolute path (`$PWD/tools/...`); `tauri dev` may not run from the repo root
+  - Real fixtures in `tools/fake-networksetup/fixtures/mac-studio/` show parser edge cases (`Tailscale` has no config header; `Ethernet Address: (null)`; DHCP header with no IP lines)
+  - `.claude/settings.json` deny rules match bare `networksetup -set*` only, not `/usr/sbin/networksetup …` — consider tightening (owner-approved edit)

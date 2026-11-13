@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+#
+# pre-commit hook for It Hurts When IP
+#
+# What it does, in order:
+#   1. Branch guard (runs first): refuses commits on `main`. Work happens on
+#      `dev`; `main` only moves when the owner approves a release.
+#   2. Secret-ish filenames: refuses staged files whose basename is `.env`,
+#      `*.pem`, `*.p12` or contains `token` (any case). No override.
+#   3. `cargo fmt --check` for each crate (src-tauri, helper-tool,
+#      service-tool) that has staged `*.rs` changes. Skipped with a warning
+#      if cargo is not on PATH.
+#   4. `shellcheck` on staged `*.sh` / `*.command` files, if shellcheck is
+#      installed (optional; skipped with a one-line note otherwise).
+#   Checks 2-4 all run; every failure is reported before the commit is refused.
+#   fmt and shellcheck look at the working-tree copy of the staged files.
+#   The hook only reads files; it never changes anything.
+#
+# Where it runs: on the Mac Studio (build host), repo root, on every
+#   `git commit`. Can also be run directly: .githooks/pre-commit
+#
+# Enable (once per clone, local repo config only):
+#   git config core.hooksPath .githooks
+#
+# Env vars:
+#   ALLOW_MAIN=1          Owner-only override: allow a commit on main
+#                         (release merges). Never set this in automation.
+#   IHWIP_HOOK_BRANCH=x   Pretend the current branch is x, to test the guard
+#                         without touching main:
+#                           IHWIP_HOOK_BRANCH=main .githooks/pre-commit
+#
+# Compatible with macOS stock bash 3.2: no mapfile, no associative arrays,
+# safe under `set -u`, filenames with spaces handled via NUL-separated lists.
+
+set -u
+
+# --- 1. Branch guard ----------------------------------------------------------
+branch="${IHWIP_HOOK_BRANCH:-$(git symbolic-ref --short -q HEAD || true)}"
+if [ "$branch" = "main" ]; then
+  if [ "${ALLOW_MAIN:-}" != "1" ]; then
+    cat >&2 <<'EOF'
+pre-commit: refusing to commit on 'main'.
+  Work happens on the dev branch:   git switch dev
+  main only moves when the owner approves a release.
+  Owner-only override:              ALLOW_MAIN=1 git commit ...
+EOF
+    exit 1
+  fi
+  echo "pre-commit: ALLOW_MAIN=1 set; allowing commit on main (owner override)." >&2
+fi
+
+top="$(git rev-parse --show-toplevel)" || exit 1
+cd "$top" || exit 1
+
+# Staged files (added/copied/modified/renamed), NUL-separated for safety.
+staged=()
+while IFS= read -r -d '' f; do
+  staged[${#staged[@]}]="$f"
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+[ "${#staged[@]}" -eq 0 ] && exit 0
+
+failures=0
+fail() {
+  printf 'pre-commit: FAIL: %s\n' "$*" >&2
+  failures=$((failures + 1))
+}
+note() {
+  printf 'pre-commit: %s\n' "$*" >&2
+}
+
+# --- 2. Secret-ish filenames --------------------------------------------------
+secrets=()
+for f in "${staged[@]}"; do
+  base="${f##*/}"
+  case "$base" in
+    .env | *.pem | *.p12)
+      secrets[${#secrets[@]}]="$f"
+      continue
+      ;;
+  esac
+  shopt -s nocasematch
+  case "$base" in
+    *token*) secrets[${#secrets[@]}]="$f" ;;
+  esac
+  shopt -u nocasematch
+done
+if [ "${#secrets[@]}" -gt 0 ]; then
+  fail "staged files look like secrets (no override). Unstage with: git restore --staged <file>"
+  for f in "${secrets[@]}"; do
+    printf '    %s\n' "$f" >&2
+  done
+fi
+
+# --- 3. cargo fmt --check -----------------------------------------------------
+rs_crates=()
+for crate in src-tauri helper-tool service-tool; do
+  [ -f "$crate/Cargo.toml" ] || continue
+  for f in "${staged[@]}"; do
+    case "$f" in
+      "$crate"/*.rs)
+        rs_crates[${#rs_crates[@]}]="$crate"
+        break
+        ;;
+    esac
+  done
+done
+if [ "${#rs_crates[@]}" -gt 0 ]; then
+  if command -v cargo >/dev/null 2>&1; then
+    for crate in "${rs_crates[@]}"; do
+      if ! cargo fmt --manifest-path "$crate/Cargo.toml" -- --check >&2; then
+        fail "cargo fmt check failed in $crate/. Fix with: cargo fmt --manifest-path $crate/Cargo.toml"
+      fi
+    done
+  else
+    note "warning: cargo not on PATH; skipped cargo fmt check for: ${rs_crates[*]}"
+  fi
+fi
+
+# --- 4. shellcheck (optional) -------------------------------------------------
+sh_files=()
+for f in "${staged[@]}"; do
+  case "$f" in
+    *.sh | *.command)
+      # ./ prefix: a path starting with '-' can't be read as an option.
+      [ -f "$f" ] && sh_files[${#sh_files[@]}]="./$f"
+      ;;
+  esac
+done
+if [ "${#sh_files[@]}" -gt 0 ]; then
+  if command -v shellcheck >/dev/null 2>&1; then
+    if ! shellcheck "${sh_files[@]}" >&2; then
+      fail "shellcheck reported findings (see above)."
+    fi
+  else
+    note "note: shellcheck not installed; skipped lint of ${#sh_files[@]} shell file(s) (optional)."
+  fi
+fi
+
+# --- Result -------------------------------------------------------------------
+if [ "$failures" -gt 0 ]; then
+  printf 'pre-commit: %d check(s) failed; commit refused.\n' "$failures" >&2
+  exit 1
+fi
+printf 'pre-commit: ok (%d staged file(s) checked).\n' "${#staged[@]}" >&2
+exit 0
