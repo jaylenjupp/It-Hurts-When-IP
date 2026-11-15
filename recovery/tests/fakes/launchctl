@@ -1,0 +1,94 @@
+#!/bin/bash
+# Fake launchctl for recovery/tests. Never talks to launchd.
+#
+# State: $IHWIP_ROOT/.fake/launchctl.loaded (one loaded label per line).
+# Calls: every argv is appended to $IHWIP_FAKE_CALLS (if set).
+# Supports: print system/<label>, bootout system/<label>, unload <plist>.
+# IHWIP_FAKE_LAUNCHCTL_NO_BOOTOUT=1 makes every bootout fail (exit 5), so the
+# rescue script's `unload` fallback runs.
+# Output and exit codes follow real macOS 26 (captured read-only on the Mac Studio).
+
+set -u
+
+root="${IHWIP_ROOT:-}"
+case "$root" in
+    "" | /)
+        echo "fake launchctl: IHWIP_ROOT must point at a fake root" >&2
+        exit 98
+        ;;
+esac
+state="$root/.fake/launchctl.loaded"
+
+if [ -n "${IHWIP_FAKE_CALLS:-}" ]; then
+    { printf '%q ' launchctl "$@"; echo; } >>"$IHWIP_FAKE_CALLS"
+fi
+
+is_loaded() {
+    [ -f "$state" ] && grep -Fxq -- "$1" "$state"
+}
+
+drop() {
+    grep -Fxv -- "$1" "$state" >"$state.tmp"
+    mv -f -- "$state.tmp" "$state"
+}
+
+label_of() {
+    case "$1" in
+        system/?*) printf '%s' "${1#system/}" ;;
+        *) return 1 ;;
+    esac
+}
+
+case "${1:-}" in
+    print)
+        label=$(label_of "${2:-}") || {
+            echo "Bad request." >&2
+            exit 64
+        }
+        if is_loaded "$label"; then
+            printf 'system/%s = {\n\tactive count = 1\n\tpath = /Library/LaunchDaemons/%s.plist\n\ttype = LaunchDaemon\n\tstate = running\n}\n' "$label" "$label"
+            exit 0
+        fi
+        echo "Bad request." >&2
+        echo "Could not find service \"$label\" in domain for system" >&2
+        exit 113
+        ;;
+    bootout)
+        label=$(label_of "${2:-}") || {
+            echo "Usage: launchctl bootout <domain-target> [service-path1 service-path2 ...] | <service-target>" >&2
+            exit 64
+        }
+        if [ "${IHWIP_FAKE_LAUNCHCTL_NO_BOOTOUT:-0}" = "1" ]; then
+            echo "Boot-out failed: 5: Input/output error" >&2
+            exit 5
+        fi
+        if is_loaded "$label"; then
+            drop "$label"
+            exit 0
+        fi
+        echo "Boot-out failed: 3: No such process" >&2
+        exit 3
+        ;;
+    unload)
+        plist="${2:-}"
+        case "$plist" in
+            "$root"/*) ;;
+            *)
+                echo "fake launchctl: unload path is outside the fake root: $plist" >&2
+                exit 97
+                ;;
+        esac
+        label="${plist##*/}"
+        label="${label%.plist}"
+        if is_loaded "$label"; then
+            drop "$label"
+            exit 0
+        fi
+        echo "Unload failed: 113: Could not find specified service" >&2
+        exit 113
+        ;;
+    *)
+        echo "fake launchctl: unsupported: $*" >&2
+        exit 64
+        ;;
+esac

@@ -1,0 +1,26 @@
+# It Hurts When IP rescue script, version 1
+# mode: plan
+# test root: <ROOT>
+# backup folder: /Users/Shared/ItHurtsWhenIP-backups/20261115T120000Z
+# plan only: nothing has been changed
+BACKUP	snapshot	network	network-before.txt
+BACKUP	file	/Library/LaunchDaemons/com.ipswitcher.helper.plist	system/Library/LaunchDaemons/com.ipswitcher.helper.plist
+BACKUP	file	/var/log/com.ipswitcher.helper.log	system/var/log/com.ipswitcher.helper.log
+BACKUP	file	/var/log/com.ipswitcher.helper.error.log	system/var/log/com.ipswitcher.helper.error.log
+BACKUP	dir	/Users/alice/Library/Application Support/com.ipswitcher.switcher	users/alice/Library/Application Support/com.ipswitcher.switcher
+BACKUP	file	/Users/alice/Library/Preferences/com.ipswitcher.switcher.plist	users/alice/Library/Preferences/com.ipswitcher.switcher.plist
+NETWORK	manual	Dante Primary	ip=192.168.10.21 mask=255.255.255.0 router=- selected=no
+NETWORK	choice	-	leave
+STOP	launchd	com.ipswitcher.helper	loaded
+REMOVE	file	/Library/LaunchDaemons/com.ipswitcher.helper.plist	-
+REMOVE	file	/Library/PrivilegedHelperTools/com.ipswitcher.helper	-
+REMOVE	socket	/var/run/com.ipswitcher.helper.sock	-
+REMOVE	file	/var/log/com.ipswitcher.helper.log	-
+REMOVE	file	/var/log/com.ipswitcher.helper.error.log	-
+REMOVE	dir	/Users/alice/Library/Application Support/com.ipswitcher.switcher	-
+REMOVE	file	/Users/alice/Library/Preferences/com.ipswitcher.switcher.plist	-
+REMOVE	dir	/Users/alice/Library/Caches/com.ipswitcher.app	-
+FORGET	receipt	com.ipswitcher.pkg	-
+FORGET	receipt	com.ipswitcher.helper	-
+LEFTOVER	path	/Applications/IP Switcher.app	reported only, not removed
+# summary: backup=6 network-manual=1 stop=1 quit=0 remove=8 forget=2 skipped=0 leftover=1

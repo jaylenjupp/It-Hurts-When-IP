@@ -1,0 +1,44 @@
+# It Hurts When IP rescue script, version 1
+# mode: plan
+# test root: <ROOT>
+# backup folder: /Users/Shared/ItHurtsWhenIP-backups/20261115T120000Z
+# plan only: nothing has been changed
+BACKUP	snapshot	network	network-before.txt
+BACKUP	file	/Library/LaunchDaemons/com.ithurtswhenip.helper.plist	system/Library/LaunchDaemons/com.ithurtswhenip.helper.plist
+BACKUP	file	/var/log/com.ithurtswhenip.helper.log	system/var/log/com.ithurtswhenip.helper.log
+BACKUP	file	/var/log/com.ithurtswhenip.helper.error.log	system/var/log/com.ithurtswhenip.helper.error.log
+BACKUP	dir	/Library/Application Support/com.ithurtswhenip.helper	system/Library/Application Support/com.ithurtswhenip.helper
+BACKUP	dir	/Users/Mary Jane/Library/Application Support/com.ithurtswhenip.desktop	users/Mary Jane/Library/Application Support/com.ithurtswhenip.desktop
+BACKUP	file	/Users/Mary Jane/Library/Preferences/com.ithurtswhenip.desktop.plist	users/Mary Jane/Library/Preferences/com.ithurtswhenip.desktop.plist
+BACKUP	file	/Users/Mary Jane/Library/Preferences/it-hurts-when-ip.plist	users/Mary Jane/Library/Preferences/it-hurts-when-ip.plist
+BACKUP	dir	/Users/alice/Library/Application Support/com.ithurtswhenip.desktop	users/alice/Library/Application Support/com.ithurtswhenip.desktop
+BACKUP	file	/Users/alice/Library/Preferences/com.ithurtswhenip.desktop.plist	users/alice/Library/Preferences/com.ithurtswhenip.desktop.plist
+BACKUP	dir	/Users/alice/Library/Logs/com.ithurtswhenip.desktop	users/alice/Library/Logs/com.ithurtswhenip.desktop
+NETWORK	manual	Dante Primary	ip=192.168.10.21 mask=255.255.255.0 router=- selected=no
+NETWORK	choice	-	leave
+NOTE	info	journal	found; restore arrives in the next build
+STOP	launchd	com.ithurtswhenip.helper	loaded
+REMOVE	file	/Library/LaunchDaemons/com.ithurtswhenip.helper.plist	-
+REMOVE	file	/Library/PrivilegedHelperTools/com.ithurtswhenip.helper	-
+REMOVE	socket	/var/run/com.ithurtswhenip.helper.sock	-
+REMOVE	file	/var/log/com.ithurtswhenip.helper.log	-
+REMOVE	file	/var/log/com.ithurtswhenip.helper.error.log	-
+REMOVE	dir	/Library/Application Support/com.ithurtswhenip.helper	-
+REMOVE	app	/Applications/It Hurts When IP.app	-
+REMOVE	dir	/Users/Mary Jane/Library/Application Support/com.ithurtswhenip.desktop	-
+REMOVE	file	/Users/Mary Jane/Library/Preferences/com.ithurtswhenip.desktop.plist	-
+REMOVE	dir	/Users/Mary Jane/Library/Caches/com.ithurtswhenip.app	-
+REMOVE	dir	/Users/Mary Jane/Library/Caches/it-hurts-when-ip	-
+REMOVE	dir	/Users/Mary Jane/Library/WebKit/it-hurts-when-ip	-
+REMOVE	file	/Users/Mary Jane/Library/Preferences/it-hurts-when-ip.plist	-
+REMOVE	dir	/Users/alice/Library/Application Support/com.ithurtswhenip.desktop	-
+REMOVE	dir	/Users/alice/Library/Caches/com.ithurtswhenip.desktop	-
+REMOVE	dir	/Users/alice/Library/WebKit/com.ithurtswhenip.desktop	-
+REMOVE	dir	/Users/alice/Library/HTTPStorages/com.ithurtswhenip.desktop	-
+REMOVE	file	/Users/alice/Library/HTTPStorages/com.ithurtswhenip.desktop.binarycookies	-
+REMOVE	file	/Users/alice/Library/Preferences/com.ithurtswhenip.desktop.plist	-
+REMOVE	dir	/Users/alice/Library/Saved Application State/com.ithurtswhenip.desktop.savedState	-
+REMOVE	dir	/Users/alice/Library/Logs/com.ithurtswhenip.desktop	-
+FORGET	receipt	com.ithurtswhenip.pkg	-
+LEFTOVER	path	/Library/Application Support/com.ithurtswhenip.unknown-thing	reported only, not removed
+# summary: backup=11 network-manual=1 stop=1 quit=0 remove=21 forget=1 skipped=0 leftover=1

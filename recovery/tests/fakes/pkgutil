@@ -1,0 +1,49 @@
+#!/bin/bash
+# Fake pkgutil for recovery/tests. Never touches the real receipt database.
+#
+# State: $IHWIP_ROOT/.fake/pkgutil.receipts (one package id per line).
+# Calls: every argv is appended to $IHWIP_FAKE_CALLS (if set).
+# Supports: --pkgs, --forget <id>.
+
+set -u
+
+root="${IHWIP_ROOT:-}"
+case "$root" in
+    "" | /)
+        echo "fake pkgutil: IHWIP_ROOT must point at a fake root" >&2
+        exit 98
+        ;;
+esac
+state="$root/.fake/pkgutil.receipts"
+
+if [ -n "${IHWIP_FAKE_CALLS:-}" ]; then
+    { printf '%q ' pkgutil "$@"; echo; } >>"$IHWIP_FAKE_CALLS"
+fi
+
+case "${1:-}" in
+    --pkgs)
+        if [ -f "$state" ]; then
+            cat "$state"
+        fi
+        exit 0
+        ;;
+    --forget)
+        id="${2:-}"
+        if [ -z "$id" ]; then
+            echo "fake pkgutil: --forget needs a package id" >&2
+            exit 64
+        fi
+        if [ -f "$state" ] && grep -Fxq -- "$id" "$state"; then
+            grep -Fxv -- "$id" "$state" >"$state.tmp"
+            mv -f -- "$state.tmp" "$state"
+            echo "Forgot package '$id' on '/'."
+            exit 0
+        fi
+        echo "No receipt for '$id' found at '/'." >&2
+        exit 1
+        ;;
+    *)
+        echo "fake pkgutil: unsupported: $*" >&2
+        exit 64
+        ;;
+esac

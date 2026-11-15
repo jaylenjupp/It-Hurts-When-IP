@@ -1,0 +1,36 @@
+#!/bin/bash
+# Fake pkill for recovery/tests. Never signals real processes.
+#
+# State: $IHWIP_ROOT/.fake/procs.running (one running process name per line).
+# Calls: every argv is appended to $IHWIP_FAKE_CALLS (if set).
+# Supports: pkill -x <name>. IHWIP_FAKE_PKILL_NOOP=1 reports success but leaves
+# the process running (an app that ignores the quit signal).
+
+set -u
+
+root="${IHWIP_ROOT:-}"
+case "$root" in
+    "" | /)
+        echo "fake pkill: IHWIP_ROOT must point at a fake root" >&2
+        exit 98
+        ;;
+esac
+state="$root/.fake/procs.running"
+
+if [ -n "${IHWIP_FAKE_CALLS:-}" ]; then
+    { printf '%q ' pkill "$@"; echo; } >>"$IHWIP_FAKE_CALLS"
+fi
+
+if [ "${1:-}" != "-x" ] || [ -z "${2:-}" ]; then
+    echo "fake pkill: only 'pkill -x <name>' is supported" >&2
+    exit 64
+fi
+if [ -f "$state" ] && grep -Fxq -- "$2" "$state"; then
+    if [ "${IHWIP_FAKE_PKILL_NOOP:-0}" = "1" ]; then
+        exit 0
+    fi
+    grep -Fxv -- "$2" "$state" >"$state.tmp"
+    mv -f -- "$state.tmp" "$state"
+    exit 0
+fi
+exit 1

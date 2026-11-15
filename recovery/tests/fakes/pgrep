@@ -1,0 +1,31 @@
+#!/bin/bash
+# Fake pgrep for recovery/tests. Never looks at real processes.
+#
+# State: $IHWIP_ROOT/.fake/procs.running (one running process name per line).
+# Calls: every argv is appended to $IHWIP_FAKE_CALLS (if set).
+# Supports: pgrep -x <name> (prints a fixed pid and exits 0 if running, else exits 1).
+
+set -u
+
+root="${IHWIP_ROOT:-}"
+case "$root" in
+    "" | /)
+        echo "fake pgrep: IHWIP_ROOT must point at a fake root" >&2
+        exit 98
+        ;;
+esac
+state="$root/.fake/procs.running"
+
+if [ -n "${IHWIP_FAKE_CALLS:-}" ]; then
+    { printf '%q ' pgrep "$@"; echo; } >>"$IHWIP_FAKE_CALLS"
+fi
+
+if [ "${1:-}" != "-x" ] || [ -z "${2:-}" ]; then
+    echo "fake pgrep: only 'pgrep -x <name>' is supported" >&2
+    exit 64
+fi
+if [ -f "$state" ] && grep -Fxq -- "$2" "$state"; then
+    echo 4242
+    exit 0
+fi
+exit 1

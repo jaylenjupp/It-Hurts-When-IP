@@ -1,0 +1,9 @@
+# It Hurts When IP rescue script, version 1
+# mode: plan
+# test root: <ROOT>
+# backup folder: none needed
+# plan only: nothing has been changed
+NOTE	info	-	nothing to remove
+NETWORK	manual	Dante Primary	ip=192.168.10.21 mask=255.255.255.0 router=- selected=no
+NETWORK	choice	-	leave
+# summary: backup=0 network-manual=1 stop=0 quit=0 remove=0 forget=0 skipped=0 leftover=0
