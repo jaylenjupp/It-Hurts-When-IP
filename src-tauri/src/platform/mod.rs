@@ -2,6 +2,9 @@
 // matches the target OS. The rest of the codebase calls into this module
 // without knowing which platform it's on.
 
+// Shared, platform-neutral: every external program runs through this.
+mod runner;
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

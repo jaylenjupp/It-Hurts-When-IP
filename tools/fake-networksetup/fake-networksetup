@@ -10,7 +10,8 @@
 #
 # Environment:
 #   IHWIP_FAKE_FIXTURES  fixture dir (default: <this dir>/fixtures/default)
-#   IHWIP_FAKE_STATE     state dir   (default: ${TMPDIR:-/tmp}/ihwip-fake-networksetup)
+#   IHWIP_FAKE_STATE     state dir   (default: ${TMPDIR:-/tmp}/ihwip-fake-networksetup);
+#                        seeded from fixtures if it has no services.txt yet
 #   IHWIP_FAKE_FAIL      comma list of subcommands to fail, e.g. "setmanual,setdhcp"
 #   IHWIP_FAKE_RESET=1   wipe state and start again from fixtures
 #
@@ -19,8 +20,10 @@
 #            -setdnsservers -setsearchdomains -setnetworkserviceenabled
 #            -version (and a "fake-log" helper subcommand)
 # Output text mirrors real networksetup closely enough for parser tests.
-# TODO(verify): exact wording/exit codes of real networksetup errors on the
-# current macOS — capture real output into fixtures before relying on them.
+# An unknown service exits 4 with two lines on stdout, copied from the real
+# capture in fixtures/mac-studio/errors/getinfo-nonexistent.*. The same text is
+# used for writes (TODO(verify) on a real Mac). Other errors (bad addresses,
+# IHWIP_FAKE_FAIL) still exit 1 with "** Error: ..." on stdout — TODO(verify).
 
 set -uo pipefail
 
@@ -32,7 +35,9 @@ LOG="$STATE/calls.log"
 ERR_PARAMS="** Error: The parameters were not valid."
 
 if [[ "${IHWIP_FAKE_RESET:-0}" == "1" ]]; then rm -rf "$STATE"; fi
-if [[ ! -d "$STATE" ]]; then
+# Seed when there is no usable state yet: the dir is missing, or it exists but
+# has no services.txt (e.g. a fresh `mktemp -d`).
+if [[ ! -f "$STATE/services.txt" ]]; then
     mkdir -p "$STATE/info" "$STATE/dns" "$STATE/search" || exit 1
     cp "$FIXTURES/services.txt" "$STATE/services.txt" 2>/dev/null || { echo "fake-networksetup: missing $FIXTURES/services.txt" >&2; exit 1; }
     cp "$FIXTURES/hardwareports.txt" "$STATE/hardwareports.txt" 2>/dev/null || true
@@ -48,6 +53,13 @@ sanitize() { printf '%s' "$1" | sed -E 's/[^A-Za-z0-9-]+/_/g'; }
 service_exists() {
     # Matches enabled ("Name") and disabled ("*Name") services; skips header.
     tail -n +2 "$STATE/services.txt" | sed -E 's/^\*//' | grep -Fxq -- "$1"
+}
+
+# Real macOS for an unknown service: exit 4, nothing on stderr, two stdout lines.
+no_such_service() {
+    echo "$1 is not a recognized network service."
+    echo "$ERR_PARAMS"
+    exit 4
 }
 
 should_fail() {
@@ -103,25 +115,25 @@ case "$cmd" in
         ;;
     -getinfo)
         svc="${1:-}"
-        service_exists "$svc" || { echo "$ERR_PARAMS"; exit 1; }
+        service_exists "$svc" || no_such_service "$svc"
         f="$STATE/info/$(sanitize "$svc").txt"
         if [[ -f "$f" ]]; then cat "$f"; else echo "DHCP Configuration"; fi
         ;;
     -getdnsservers)
         svc="${1:-}"
-        service_exists "$svc" || { echo "$ERR_PARAMS"; exit 1; }
+        service_exists "$svc" || no_such_service "$svc"
         f="$STATE/dns/$(sanitize "$svc").txt"
         if [[ -s "$f" ]]; then cat "$f"; else echo "There aren't any DNS Servers set on $svc."; fi
         ;;
     -getsearchdomains)
         svc="${1:-}"
-        service_exists "$svc" || { echo "$ERR_PARAMS"; exit 1; }
+        service_exists "$svc" || no_such_service "$svc"
         f="$STATE/search/$(sanitize "$svc").txt"
         if [[ -s "$f" ]]; then cat "$f"; else echo "There aren't any Search Domains set on $svc."; fi
         ;;
     -setmanual)
         svc="${1:-}"; ip="${2:-}"; mask="${3:-}"; router="${4:-}"
-        service_exists "$svc" || { echo "$ERR_PARAMS"; exit 1; }
+        service_exists "$svc" || no_such_service "$svc"
         if ! valid_ipv4 "$ip" || ! valid_ipv4 "$mask"; then echo "$ERR_PARAMS"; exit 1; fi
         if [[ -n "$router" ]]; then valid_ipv4 "$router" || { echo "$ERR_PARAMS"; exit 1; }; fi
         hw="$(hw_addr_line "$svc")"
@@ -138,7 +150,7 @@ EOF
         ;;
     -setdhcp)
         svc="${1:-}"
-        service_exists "$svc" || { echo "$ERR_PARAMS"; exit 1; }
+        service_exists "$svc" || no_such_service "$svc"
         hw="$(hw_addr_line "$svc")"
         orig="$FIXTURES/info/$(sanitize "$svc").txt"
         if [[ -f "$orig" ]] && head -1 "$orig" | grep -q '^DHCP'; then
@@ -159,14 +171,14 @@ EOF
         ;;
     -setdnsservers|-setsearchdomains)
         svc="${1:-}"; shift || true
-        service_exists "$svc" || { echo "$ERR_PARAMS"; exit 1; }
+        service_exists "$svc" || no_such_service "$svc"
         dir="dns"; [[ "$cmd" == "-setsearchdomains" ]] && dir="search"
         f="$STATE/$dir/$(sanitize "$svc").txt"
         if [[ "${1:-}" == "Empty" || $# -eq 0 ]]; then : > "$f"; else printf '%s\n' "$@" > "$f"; fi
         ;;
     -setnetworkserviceenabled)
         svc="${1:-}"; state="${2:-}"
-        service_exists "$svc" || { echo "$ERR_PARAMS"; exit 1; }
+        service_exists "$svc" || no_such_service "$svc"
         tmp="$(mktemp)"
         { head -1 "$STATE/services.txt"
           tail -n +2 "$STATE/services.txt" | while IFS= read -r line; do
