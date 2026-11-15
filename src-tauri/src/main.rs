@@ -7,6 +7,7 @@ use std::fs;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+mod build_info;
 mod platform;
 mod update;
 
@@ -182,6 +183,11 @@ fn get_update_prompt_dismissed_at(app: tauri::AppHandle) -> Option<i64> {
     load_config(&app).update_prompt_dismissed_at
 }
 
+#[tauri::command]
+fn get_build_info() -> build_info::BuildInfo {
+    build_info::build_info()
+}
+
 // Whether the saved top-left (x, y) lands on a monitor connected *right now*.
 //
 // Works on both platforms because the saved coords and the monitor rects come
@@ -225,6 +231,7 @@ fn main() {
             check_for_update,
             dismiss_update_prompt,
             get_update_prompt_dismissed_at,
+            get_build_info,
         ])
         .setup(|app| {
             use std::sync::atomic::{AtomicBool, Ordering};
