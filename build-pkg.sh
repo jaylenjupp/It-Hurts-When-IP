@@ -3,8 +3,10 @@
 # build-pkg.sh — Build a single .pkg installer for
 # "It Hurts When IP" (app + helper + uninstaller)
 #
-# Run from: ~/ip-switcher/
-# Usage:    chmod +x build-pkg.sh && ./build-pkg.sh
+# Normally run by scripts/build-macos.sh (Mac Studio, repo root), which
+# builds the prerequisites below, moves the pkg into release-out/ and
+# verifies it. Running it by hand also works, from the repo root:
+# Usage:    bash build-pkg.sh
 #
 # Prerequisites:
 #   1. Universal helper binary already built:
@@ -67,12 +69,13 @@ if [ ! -d "${APP_BUNDLE}" ]; then
     exit 1
 fi
 
-# Verify helper is universal
-HELPER_ARCH=$(file "${HELPER_BIN}")
-if [[ ! "${HELPER_ARCH}" == *"universal"* ]]; then
-    echo "WARNING: Helper binary may not be universal:"
-    echo "         ${HELPER_ARCH}"
-    echo "         Continuing anyway..."
+# Verify helper is universal (both Apple Silicon and Intel slices)
+HELPER_ARCHS=$(lipo -archs "${HELPER_BIN}" 2>/dev/null || true)
+if [[ " ${HELPER_ARCHS} " != *" x86_64 "* || " ${HELPER_ARCHS} " != *" arm64 "* ]]; then
+    echo "ERROR: Helper binary is not universal (needs x86_64 and arm64):"
+    echo "       lipo -archs ${HELPER_BIN} -> ${HELPER_ARCHS:-<unreadable>}"
+    echo "       Build the universal helper first (see instructions at top of script)"
+    exit 1
 fi
 
 echo "  All prerequisites found."

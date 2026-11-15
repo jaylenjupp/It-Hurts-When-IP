@@ -1,8 +1,8 @@
 # Progress
 - Current phase: 0 (in progress) — Phase 0 + 1 plan approved by Jay 2026-11-13 (decisions D1–D11 below)
-- Last committed package: 0.1 Park Windows + housekeeping (`4c251a2`; preceded by `feeb6be` style: cargo fmt src-tauri)
-- In progress: 0.2 CommandRunner + parsers + fake alignment
-- Next step: 0.3 build stamp
+- Last committed package: 0.3 build stamp (`68c9048`); before it 0.2 CommandRunner + parsers (`b76a675`), 0.1 Park Windows (`4c251a2`, with `feeb6be` style: cargo fmt src-tauri)
+- In progress: 0.4 build-macos.sh + verify-pkg.sh
+- Next step: 0.5 Phase 0 draft release (push `dev`, build from clean HEAD, `release-dev.sh`)
 - Package order: 0.1 park Windows · 0.2 CommandRunner/parsers · 0.3 build stamp · 0.4 build-macos.sh + verify-pkg.sh · 0.5 Phase 0 draft · 1.1 rescue core + tests · 1.2 network revert + menu + wait-pid · 1.3 bundle script, retire old uninstallers · 1.4 in-app Uninstall… · 1.5 Phase 1 draft
 - Decisions approved 2026-11-13 (kickoff plan):
   - D1 Windows parked under `platforms-parked/windows/` (`service-tool/`, `installer-iss/`, `platform/windows.rs`, `tauri.windows.conf.json`); Windows titlebar JS/CSS in `src/` stays

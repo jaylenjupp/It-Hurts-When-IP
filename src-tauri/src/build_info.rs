@@ -22,6 +22,21 @@ pub struct BuildInfo {
     pub built_utc: String,
 }
 
+/// The whole stamp as one string, kept in the binary by `#[used]`.
+/// scripts/verify-pkg.sh searches the app executable for
+/// `IHWIP_BUILD_STAMP:<sha>:<dirty>:` to prove a pkg holds the recorded build.
+/// (The short literals in `build_info()` get inlined as immediates in release
+/// builds, so grep can't find them.)
+#[used]
+static BUILD_STAMP_MARKER: &str = concat!(
+    "IHWIP_BUILD_STAMP:",
+    env!("IHWIP_GIT_SHA"),
+    ":",
+    env!("IHWIP_GIT_DIRTY"),
+    ":",
+    env!("IHWIP_BUILD_UTC")
+);
+
 pub fn build_info() -> BuildInfo {
     BuildInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -83,6 +98,25 @@ mod tests {
             is_utc_stamp(&info.built_utc),
             "unexpected built_utc: {:?}",
             info.built_utc
+        );
+    }
+
+    #[test]
+    fn build_stamp_marker_matches_build_info() {
+        let info = build_info();
+        assert!(
+            BUILD_STAMP_MARKER.starts_with("IHWIP_BUILD_STAMP:"),
+            "unexpected marker: {:?}",
+            BUILD_STAMP_MARKER
+        );
+        assert_eq!(
+            BUILD_STAMP_MARKER,
+            format!(
+                "IHWIP_BUILD_STAMP:{}:{}:{}",
+                info.git_sha,
+                env!("IHWIP_GIT_DIRTY"),
+                info.built_utc
+            )
         );
     }
 
