@@ -22,13 +22,13 @@ Every phase ends with a **draft release** (see `docs/RELEASING.md`) and a "what 
 - First draft release of current behaviour built by the new pipeline.
 
 **Acceptance**
-- [ ] `cargo test --manifest-path src-tauri/Cargo.toml` passes with ≥ 4 parsing tests
-- [ ] `cargo test --manifest-path helper-tool/Cargo.toml` passes (even if 0 tests yet, the crate builds)
-- [ ] `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` passes
-- [ ] `./scripts/build-macos.sh` exits 0 and prints a `.pkg` path + SHA-256
-- [ ] `./scripts/verify-pkg.sh release-out/*.pkg` exits 0 and reports `x86_64 arm64` for app and helper
-- [ ] `git grep -n "service-tool\|installer-iss" -- scripts build-pkg.sh src-tauri/tauri.conf.json` returns nothing
-- [ ] `gh release view <draft tag> --json isDraft --jq .isDraft` prints `true`
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml` passes with ≥ 4 parsing tests
+- [x] `cargo test --manifest-path helper-tool/Cargo.toml` passes (even if 0 tests yet, the crate builds)
+- [x] `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` passes
+- [x] `./scripts/build-macos.sh` exits 0 and prints a `.pkg` path + SHA-256
+- [x] `./scripts/verify-pkg.sh release-out/*.pkg` exits 0 and reports `x86_64 arm64` for app and helper
+- [x] `git grep -n "service-tool\|installer-iss" -- scripts build-pkg.sh src-tauri/tauri.conf.json` returns nothing
+- [x] `gh release view <draft tag> --json isDraft --jq .isDraft` prints `true`
 
 ---
 

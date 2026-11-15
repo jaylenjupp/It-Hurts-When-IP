@@ -1,8 +1,8 @@
 # Progress
-- Current phase: 0 (in progress) — Phase 0 + 1 plan approved by Jay 2026-11-13 (decisions D1–D11 below)
-- Last committed package: 0.3 build stamp (`68c9048`); before it 0.2 CommandRunner + parsers (`b76a675`), 0.1 Park Windows (`4c251a2`, with `feeb6be` style: cargo fmt src-tauri)
-- In progress: 0.4 build-macos.sh + verify-pkg.sh
-- Next step: 0.5 Phase 0 draft release (push `dev`, build from clean HEAD, `release-dev.sh`)
+- Current phase: 1 (in progress) — Phase 0 done 2026-11-15, draft released; Phase 0 + 1 plan approved by Jay 2026-11-13 (decisions D1–D11 below)
+- Last committed package: 0.5 Phase 0 draft release (this commit); before it 0.4 build-macos.sh + verify-pkg.sh (`2e95cd6`), 0.3 build stamp (`68c9048`), 0.2 CommandRunner + parsers (`b76a675`), 0.1 Park Windows (`4c251a2`, with `feeb6be` style: cargo fmt src-tauri)
+- In progress: 1.1 Rescue script core + test harness
+- Next step: 1.2 network revert + menu + wait-pid
 - Package order: 0.1 park Windows · 0.2 CommandRunner/parsers · 0.3 build stamp · 0.4 build-macos.sh + verify-pkg.sh · 0.5 Phase 0 draft · 1.1 rescue core + tests · 1.2 network revert + menu + wait-pid · 1.3 bundle script, retire old uninstallers · 1.4 in-app Uninstall… · 1.5 Phase 1 draft
 - Decisions approved 2026-11-13 (kickoff plan):
   - D1 Windows parked under `platforms-parked/windows/` (`service-tool/`, `installer-iss/`, `platform/windows.rs`, `tauri.windows.conf.json`); Windows titlebar JS/CSS in `src/` stays
@@ -17,7 +17,7 @@
   - D10 `.claude/settings.json`: allow `./recovery/tests/run-tests.sh`, deny absolute-path `networksetup` writes (done)
   - D11 both drafts stay 1.13.1; publish as v1.14.0 decided at end of Phase 1
 - Extra uninstall inventory found on the Mac Studio (read-only search): per-user `com.ithurtswhenip.app`, `com.ithurtswhenip.switcher`, `com.ipswitcher.app`, `com.ipswitcher.switcher`, `it-hurts-when-ip` under `~/Library/{Caches,WebKit}`, `~/Library/Preferences/it-hurts-when-ip.plist`; legacy socket `/var/run/com.ipswitcher.helper.sock` (from git history)
-- Latest draft build: — (release path proven with `release-dev.sh --dry-run` only)
+- Latest draft build: Phase 0 — tag `dev-v1.13.1-20261115-1918-2e95cd6` (commit `2e95cd6`, pkg SHA-256 `4043de46…1242`), https://github.com/jaylenjupp/It-Hurts-When-IP/releases/tag/untagged-3f1337838938d05d5ce1 — awaiting Jay's travel-Mac results
 - Notes / open decisions:
   - Travel test Mac's macOS version (sets minimumSystemVersion floor) — ask Jay
   - Advanced-mode feature list — decide at start of Phase 4
@@ -25,9 +25,15 @@
   - `tmux` is not installed on the Mac Studio — decided 2026-11-13: not needed, Jay leaves Terminal open while travelling (skip the `tmux` lines in `docs/REMOTE-SETUP.md` §4)
   - `shellcheck` is installed (`/opt/homebrew/bin/shellcheck`, seen 2026-11-13) — pre-commit now lints staged shell files
   - `claude-kit/repo-seed/` removed 2026-11-13 with Jay's OK (the root copies are the live ones; `claude-kit/README.md` and `prompts/01-setup.md` still mention it as setup history)
-  - Tracked `.DS_Store` files (root, `icon/`, `src-tauri/`) keep dirtying the tree despite `.gitignore`; untracking (`git rm --cached`) needs Jay's OK
+  - `.DS_Store` files untracked in 0.1 (still on disk, ignored)
   - Home LAN subnet + two service names are still in `dev` history (`aaa88da`, masked in `b37c332`) — decided 2026-11-13: scrub in Phase 8; settle merge ordering at the start of Phase 7 (see PLAN)
   - Stale root `Uninstall Script.command` (old `com.ipswitcher` ids) — remove in Phase 1, not before
+- Phase 0 evidence (Mac Studio, repo root, re-run by the orchestrator 2026-11-15): app crate 39 tests pass (12 parser tests); helper crate builds, 0 tests; clippy `-D warnings` clean (debug + release); `./scripts/build-macos.sh` exit 0 at clean `2e95cd6`; `./scripts/verify-pkg.sh` 22 passed / 0 failed / 1 skipped (rescue script), app and helper `x86_64 arm64`; PLAN grep for Windows paths empty; draft `isDraft: true`
+- Notes from Phase 0:
+  - The Mac Studio was found asleep (dark-wake cycles) on 2026-11-15, which cut off two builder runs; a 12 h `caffeinate -ims` was started by the session. Something other than idle sleep put it to sleep — Jay to check
+  - `build-macos.sh` moved a stray root `ItHurtsWhenIP-1.13.1.pkg` (identical to the published v1.13.1 asset) to `release-out/previous/`
+  - Suggestion for Jay (needs approval, `scripts/ship/`): have `release-dev.sh` refuse a pkg whose `.buildinfo` says `dirty=true` or whose `git_sha` is not HEAD. Until then the orchestrator checks this by hand before each draft
+  - Debug-route vs helper difference to settle in Phase 2: the helper passes an empty gateway as `""` to `-setmanual`; the debug fake route omits it
 - Findings from setup to pick up in Phase 0/2:
   - Real `networksetup -getinfo <unknown>` exits 4 and reports on **stdout** (two lines); the fake exits 1 — align the fake, and never rely on stderr alone (audit item 4)
   - Fake doesn't seed an existing empty `IHWIP_FAKE_STATE` dir (silent empty list, exit 0) — seed when `services.txt` is missing
