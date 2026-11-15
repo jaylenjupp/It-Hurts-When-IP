@@ -1,7 +1,7 @@
 # Progress
 - Current phase: 1 (in progress) — Phase 0 done 2026-11-15, draft released; Phase 0 + 1 plan approved by Jay 2026-11-13 (decisions D1–D11 below)
 - Last committed package: 0.5 Phase 0 draft release (this commit); before it 0.4 build-macos.sh + verify-pkg.sh (`2e95cd6`), 0.3 build stamp (`68c9048`), 0.2 CommandRunner + parsers (`b76a675`), 0.1 Park Windows (`4c251a2`, with `feeb6be` style: cargo fmt src-tauri)
-- In progress: 1.1 Rescue script core + test harness
+- In progress: 1.1 Rescue script core + test harness — **uncommitted, unreviewed** work in `recovery/` (script, `tests/run-tests.sh`, 4 fakes, 4 goldens) as of 2026-11-15 23:10 UTC; builder was resumed after a usage-limit stop and had not yet reported. A new session should review it as-is or have a fresh builder finish it (see "1.1 hand-over" below)
 - Next step: 1.2 network revert + menu + wait-pid
 - Package order: 0.1 park Windows · 0.2 CommandRunner/parsers · 0.3 build stamp · 0.4 build-macos.sh + verify-pkg.sh · 0.5 Phase 0 draft · 1.1 rescue core + tests · 1.2 network revert + menu + wait-pid · 1.3 bundle script, retire old uninstallers · 1.4 in-app Uninstall… · 1.5 Phase 1 draft
 - Decisions approved 2026-11-13 (kickoff plan):
@@ -28,6 +28,7 @@
   - `.DS_Store` files untracked in 0.1 (still on disk, ignored)
   - Home LAN subnet + two service names are still in `dev` history (`aaa88da`, masked in `b37c332`) — decided 2026-11-13: scrub in Phase 8; settle merge ordering at the start of Phase 7 (see PLAN)
   - Stale root `Uninstall Script.command` (old `com.ipswitcher` ids) — remove in Phase 1, not before
+- 1.1 hand-over (for a resumed session): brief = plan section "Rescue CLI" + decisions D5/D6 + the extra inventory above. Approved approach: one render path for the plan, one `safe_remove` function limited to the inventory list, tab-separated plan records (`STOP/QUIT/BACKUP/REMOVE/FORGET/NETWORK/LEFTOVER/NOTE`), guards (overrides ignored as root; `IHWIP_ROOT` requires every command override; non-root without `IHWIP_ROOT` is plan-only), runner with PATH stubs that print `REAL TOOL REACHED`. Three constraints added by the orchestrator: (1) symlink safety in real mode too — parent of each item must resolve where expected, never remove/back up through a symlink; (2) backup dir hardening — refuse a symlinked `ItHurtsWhenIP-backups`, create the timestamp dir with plain `mkdir`; (3) `--log` parent dir must exist. Review standard: `bash -n` + `shellcheck` on script, runner, fakes; `./recovery/tests/run-tests.sh` twice; read the `full` golden; confirm the real install on the Mac Studio is untouched. Not in 1.1 (package 1.2): DHCP switching, journal restore, interactive menu, `--wait-pid`
 - Phase 0 evidence (Mac Studio, repo root, re-run by the orchestrator 2026-11-15): app crate 39 tests pass (12 parser tests); helper crate builds, 0 tests; clippy `-D warnings` clean (debug + release); `./scripts/build-macos.sh` exit 0 at clean `2e95cd6`; `./scripts/verify-pkg.sh` 22 passed / 0 failed / 1 skipped (rescue script), app and helper `x86_64 arm64`; PLAN grep for Windows paths empty; draft `isDraft: true`
 - Notes from Phase 0:
   - The Mac Studio was found asleep (dark-wake cycles) on 2026-11-15, which cut off two builder runs; a 12 h `caffeinate -ims` was started by the session. Something other than idle sleep put it to sleep — Jay to check
