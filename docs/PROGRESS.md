@@ -1,8 +1,8 @@
 # Progress
-- Current phase: 1 (in progress) — Phase 0 done 2026-11-15, draft released; Phase 0 + 1 plan approved by Jay 2026-11-13 (decisions D1–D11 below)
-- Last committed package: 1.4 In-app Uninstall… (this commit; see `git log`); 1.3 Bundle rescue script + retire old uninstallers (`6da78c3`); 1.2 Network revert + menu + wait-pid (`906a36a`); 1.1 Rescue script core + test harness (`73c80b4`); Phase 0: 0.5 draft + docs (`37328b9`), 0.4 (`2e95cd6`), 0.3 (`68c9048`), 0.2 (`b76a675`), 0.1 (`4c251a2`, with `feeb6be`)
+- Current phase: 1 (built, draft released 2026-11-16, awaiting Jay's travel-Mac test and the publish decision) — Phase 0 done 2026-11-15, draft released; Phase 0 + 1 plan approved by Jay 2026-11-13 (decisions D1–D11 below)
+- Last committed package: 1.5 Phase 1 draft + docs (this commit); 1.4 In-app Uninstall… (`b5b46d4`); 1.3 Bundle rescue script + retire old uninstallers (`6da78c3`); 1.2 Network revert + menu + wait-pid (`906a36a`); 1.1 Rescue script core + test harness (`73c80b4`); Phase 0: 0.5 draft + docs (`37328b9`), 0.4 (`2e95cd6`), 0.3 (`68c9048`), 0.2 (`b76a675`), 0.1 (`4c251a2`, with `feeb6be`)
 - In progress: —
-- Next step: 1.5 Phase 1 draft (push `dev`, clean build, verify, `release-dev.sh`). Full plan: `~/.claude/plans/precious-sparking-starlight.md` on the Mac Studio (summarised in the decisions below)
+- Next step: Jay tests the Phase 1 draft on the travel Mac (list in the draft notes and `docs/ROAD-TESTING.md`) and decides: publish as v1.14.0 now, or after Phase 2. Do not start Phase 2 until Jay says so. Full plan: `~/.claude/plans/precious-sparking-starlight.md` on the Mac Studio (summarised in the decisions below)
 - Package order: 0.1 park Windows · 0.2 CommandRunner/parsers · 0.3 build stamp · 0.4 build-macos.sh + verify-pkg.sh · 0.5 Phase 0 draft · 1.1 rescue core + tests · 1.2 network revert + menu + wait-pid · 1.3 bundle script, retire old uninstallers · 1.4 in-app Uninstall… · 1.5 Phase 1 draft
 - Decisions approved 2026-11-13 (kickoff plan):
   - D1 Windows parked under `platforms-parked/windows/` (`service-tool/`, `installer-iss/`, `platform/windows.rs`, `tauri.windows.conf.json`); Windows titlebar JS/CSS in `src/` stays
@@ -17,7 +17,7 @@
   - D10 `.claude/settings.json`: allow `./recovery/tests/run-tests.sh`, deny absolute-path `networksetup` writes (done)
   - D11 both drafts stay 1.13.1; publish as v1.14.0 decided at end of Phase 1
 - Extra uninstall inventory found on the Mac Studio (read-only search): per-user `com.ithurtswhenip.app`, `com.ithurtswhenip.switcher`, `com.ipswitcher.app`, `com.ipswitcher.switcher`, `it-hurts-when-ip` under `~/Library/{Caches,WebKit}`, `~/Library/Preferences/it-hurts-when-ip.plist`; legacy socket `/var/run/com.ipswitcher.helper.sock` (from git history)
-- Latest draft build: Phase 0 — tag `dev-v1.13.1-20261115-1918-2e95cd6` (commit `2e95cd6`, pkg SHA-256 `4043de46…1242`), https://github.com/jaylenjupp/It-Hurts-When-IP/releases/tag/untagged-3f1337838938d05d5ce1 — awaiting Jay's travel-Mac results
+- Latest draft build: Phase 1 — tag `dev-v1.13.1-20261116-0859-b5b46d4` (commit `b5b46d4`, pkg SHA-256 `399a95a2…9925`, assets `.pkg`, `.sha256`, `ithurtswhenip-rescue.command`), https://github.com/jaylenjupp/It-Hurts-When-IP/releases/tag/untagged-08bbfe69f0ffa457a66a — awaiting Jay's travel-Mac results. Evidence (Mac Studio, 2026-11-16): app crate 75 tests, helper crate 0 tests (builds), rescue suite 57, `verify-pkg.sh` 26 passed / 0 failed / 0 skipped, `dirty=false`. Previous: Phase 0 — tag `dev-v1.13.1-20261115-1918-2e95cd6`, https://github.com/jaylenjupp/It-Hurts-When-IP/releases/tag/untagged-3f1337838938d05d5ce1 (no travel-Mac results recorded yet)
 - Notes / open decisions:
   - Travel test Mac's macOS version (sets minimumSystemVersion floor) — ask Jay
   - Advanced-mode feature list — decide at start of Phase 4

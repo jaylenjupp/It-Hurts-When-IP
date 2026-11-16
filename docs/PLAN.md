@@ -44,13 +44,13 @@ Every phase ends with a **draft release** (see `docs/RELEASING.md`) and a "what 
 - Test harness: fake filesystem root + fake `launchctl`/`pkgutil`/`networksetup`, golden `--plan` outputs.
 
 **Acceptance**
-- [ ] `shellcheck recovery/ithurtswhenip-rescue.command` and `bash -n` pass
-- [ ] Script test suite passes (fake root, no sudo): full install tree → after `--uninstall --yes` nothing from the inventory remains, backups exist, leftovers reported
-- [ ] Legacy-only tree (old `com.ipswitcher` files) is cleaned by the same run
-- [ ] With no journal, `--plan` lists Manual services and selects none by default
-- [ ] `--plan` changes nothing (tree checksum identical before/after)
-- [ ] `verify-pkg.sh` confirms the rescue script is inside the app bundle
-- [ ] Draft release has `.pkg`, `.sha256` and `ithurtswhenip-rescue.command` assets
+- [x] `shellcheck recovery/ithurtswhenip-rescue.command` and `bash -n` pass
+- [x] Script test suite passes (fake root, no sudo): full install tree → after `--uninstall --yes` nothing from the inventory remains, backups exist, leftovers reported
+- [x] Legacy-only tree (old `com.ipswitcher` files) is cleaned by the same run
+- [x] With no journal, `--plan` lists Manual services and selects none by default
+- [x] `--plan` changes nothing (tree checksum identical before/after)
+- [x] `verify-pkg.sh` confirms the rescue script is inside the app bundle
+- [x] Draft release has `.pkg`, `.sha256` and `ithurtswhenip-rescue.command` assets
 - [ ] Owner confirms on travel Mac: install → use → uninstall leaves no files and a working network (owner-run, recorded in PROGRESS)
 - [ ] Owner decision recorded: publish as v1.14.0 to colleagues now, or after Phase 2
 
