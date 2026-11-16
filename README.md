@@ -90,15 +90,27 @@ Because the privileged helper applies the changes, none of these actions prompt 
 
 ### macOS
 
-The uninstaller is bundled inside the app:
+The app comes with a rescue script that removes it completely, even if the app or its helper is broken. (An **Uninstall…** command inside the app is coming in the next version.)
 
-1. In `/Applications`, **right-click It Hurts When IP.app** → **Show Package Contents**.
-2. Navigate to **Contents → Resources**.
-3. Double-click **`uninstall.command`**.
+Open **Terminal** and run:
 
-This removes It Hurts When IP and its privileged helper from your system.
+```bash
+sudo bash "/Applications/It Hurts When IP.app/Contents/Resources/ithurtswhenip-rescue.command"
+```
+
+It shows a short menu: show the plan, uninstall, or quit. Nothing is removed until you type `UNINSTALL`.
+
+- **Preview first:** add `--plan` to the end of the command to see every step. It changes nothing.
+- **App missing or broken?** Download `ithurtswhenip-rescue.command` from the [Releases page](https://github.com/jaylenjupp/it-hurts-when-ip/releases) and run it the same way: `sudo bash ~/Downloads/ithurtswhenip-rescue.command`
+- **What it removes:** the app, the privileged helper (its background service, socket and logs), the app's settings for every user on the Mac, the installer receipts, and files left by older "IP Switcher" versions. Anything else it finds with the app's name is listed, not deleted.
+- **Backups:** before removing anything it copies the settings, logs and a snapshot of your network settings to `/Users/Shared/ItHurtsWhenIP-backups/<timestamp>/`. That folder is kept.
+- **Network settings are left alone** unless you pick services in the menu to switch back to DHCP (or pass `--network dhcp:"<service>"`). Services you don't pick are never touched.
+
+Run it with `--help` for all options.
 
 ### Windows
+
+> Windows is parked this round (see *Building from source → Windows* below); this applies to existing Windows installs only.
 
 Uninstall from **Settings → Apps → Installed apps → It Hurts When IP → Uninstall**. The uninstaller automatically stops and removes the privileged background service and deletes the app's files.
 

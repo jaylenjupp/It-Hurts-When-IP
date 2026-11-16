@@ -187,6 +187,9 @@ junk_check() {
 junk_check "no AppleDouble ._* files in payload" -name '._*'
 junk_check "no .DS_Store files in payload" -name '.DS_Store'
 junk_check "nothing from node_modules in payload" -path '*node_modules*'
+# The old uninstallers are retired; the rescue script is the only one. The glob
+# covers both old names (the bundled heredoc one and "Uninstall Script").
+junk_check "no old uninstall*.command in payload (the rescue script replaces it)" -iname 'uninstall*.command'
 
 # --- Installer scripts -----------------------------------------------------------------
 for script in preinstall postinstall; do
@@ -202,6 +205,27 @@ for script in preinstall postinstall; do
         pass "${label}"
     fi
 done
+
+# preinstall must also stop and remove a legacy pre-rename helper (decision D9).
+LEGACY_LABEL="com.ipswitcher.helper"
+LEGACY_NEEDLES="system/${LEGACY_LABEL}
+/Library/LaunchDaemons/${LEGACY_LABEL}.plist
+/Library/PrivilegedHelperTools/${LEGACY_LABEL}
+/var/run/${LEGACY_LABEL}.sock"
+LEGACY_LABEL_TEXT="preinstall removes the legacy ${LEGACY_LABEL} daemon (bootout, plist, binary, socket)"
+if [[ ! -f "${SCRIPTS}/preinstall" ]]; then
+    fail "${LEGACY_LABEL_TEXT} — preinstall missing"
+else
+    legacy_missing=""
+    while IFS= read -r needle; do
+        grep -q -F -- "${needle}" "${SCRIPTS}/preinstall" || legacy_missing="${legacy_missing}${needle}"$'\n'
+    done <<<"${LEGACY_NEEDLES}"
+    if [[ -z "${legacy_missing}" ]]; then
+        pass "${LEGACY_LABEL_TEXT}"
+    else
+        fail "${LEGACY_LABEL_TEXT} — not mentioned: $(join_lines "${legacy_missing}")"
+    fi
+fi
 
 # --- Architectures -----------------------------------------------------------------------
 APP_EXEC=""
@@ -341,20 +365,29 @@ else
     skip "pkg SHA-256 equals buildinfo: no buildinfo file"
 fi
 
-# --- Rescue script (FAIL once recovery/ithurtswhenip-rescue.command exists) -----------------------
+# --- Rescue script (the app's only uninstaller; must match the repo copy) -------------------------
 RESCUE_SRC="${REPO_ROOT}/recovery/${RESCUE_NAME}"
 RESCUE_BUNDLED="${APP}/Contents/Resources/${RESCUE_NAME}"
-RESCUE_LABEL="rescue script in Contents/Resources, executable, identical to recovery/${RESCUE_NAME}"
+RESCUE_LABEL="rescue script in Contents/Resources, mode 755, identical to recovery/${RESCUE_NAME}"
+RESCUE_MODE="$(stat -f '%Lp' "${RESCUE_BUNDLED}" 2>/dev/null || true)"
 if [[ ! -f "${RESCUE_SRC}" ]]; then
-    skip "${RESCUE_LABEL} (recovery/${RESCUE_NAME} not in the repo yet)"
+    fail "${RESCUE_LABEL} — recovery/${RESCUE_NAME} not found in ${REPO_ROOT}, nothing to compare with"
 elif [[ ! -f "${RESCUE_BUNDLED}" ]]; then
     fail "${RESCUE_LABEL} — missing from the app bundle"
-elif [[ ! -x "${RESCUE_BUNDLED}" ]]; then
-    fail "${RESCUE_LABEL} — not executable"
+elif [[ "${RESCUE_MODE}" != "755" ]]; then
+    fail "${RESCUE_LABEL} — mode is ${RESCUE_MODE:-unreadable}"
 elif ! cmp -s "${RESCUE_SRC}" "${RESCUE_BUNDLED}"; then
     fail "${RESCUE_LABEL} — differs from the repo copy"
 else
     pass "${RESCUE_LABEL}"
+fi
+RESCUE_SYNTAX_LABEL="bundled rescue script passes bash -n"
+if [[ ! -f "${RESCUE_BUNDLED}" ]]; then
+    fail "${RESCUE_SYNTAX_LABEL} — missing from the app bundle"
+elif ! err="$(bash -n "${RESCUE_BUNDLED}" 2>&1)"; then
+    fail "${RESCUE_SYNTAX_LABEL} — bash -n: $(first_line "${err}")"
+else
+    pass "${RESCUE_SYNTAX_LABEL}"
 fi
 
 summary_and_exit

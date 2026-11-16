@@ -23,6 +23,65 @@ sudo bash ~/Downloads/ithurtswhenip-rescue.command --plan
 ```
 (`--plan` changes nothing.)
 
+## Uninstalling (rescue script)
+Every command in this section runs on **Jay's travel Mac, Terminal**. The same script is in two places:
+- inside the app: `"/Applications/It Hurts When IP.app/Contents/Resources/ithurtswhenip-rescue.command"` (keep the quotes)
+- the release asset: `~/Downloads/ithurtswhenip-rescue.command` (works when the app is gone or broken)
+
+The examples use the downloaded copy; swap in the in-app path to test that one too. Each uninstall removes the app, so reinstall the pkg before trying the next way.
+
+1. **Plan first, and paste the output into the session** (changes nothing):
+   ```bash
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command --plan
+   ```
+   One tab-separated line per step: `BACKUP …` (copied first), `NETWORK manual <service> ip=… selected=no` (services on Manual settings; none is picked unless you pick it), `NETWORK choice - leave`, `STOP launchd com.ithurtswhenip.helper`, `REMOVE …`, `FORGET receipt com.ithurtswhenip.pkg`, `LEFTOVER …` (found, only reported), then a `# summary:` line.
+2. **Uninstall from the menu:**
+   ```bash
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command
+   ```
+   Pick `3` to leave the network alone, or `2` to tick services to switch to DHCP (nothing is ticked to begin with; type a number to tick, `d` when done). It prints the plan again, then asks you to type `UNINSTALL`.
+3. **Uninstall and put one service back on DHCP, without the menu** (name exactly as in the plan's `NETWORK` lines):
+   ```bash
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command --plan --network dhcp:"<service>"
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command --uninstall --network dhcp:"<service>"
+   ```
+   The plan shows `NETWORK setdhcp <service> source=pick`. The uninstall still asks you to type `UNINSTALL`.
+
+**What a good run prints** after you confirm (fields are tab-separated, lined up here; there are more `OK`/`VERIFY` lines of each kind):
+```
+OK      BACKUP   snapshot  network  network-before.txt
+OK      NETWORK  setdhcp   <service>  source=pick
+VERIFY  ok       network:<service>  now=dhcp/<ip>/<mask>/<router>
+OK      STOP     launchd   com.ithurtswhenip.helper  stopped (bootout)
+OK      REMOVE   file      /Library/PrivilegedHelperTools/com.ithurtswhenip.helper  -
+OK      FORGET   receipt   com.ithurtswhenip.pkg  -
+VERIFY  ok       /Library/PrivilegedHelperTools/com.ithurtswhenip.helper
+VERIFY  ok       launchd:com.ithurtswhenip.helper
+VERIFY  ok       receipt:com.ithurtswhenip.pkg
+# result
+# backup folder: /Users/Shared/ItHurtsWhenIP-backups/<UTC time>
+# log: /Users/Shared/ItHurtsWhenIP-backups/<UTC time>/rescue.log
+# failed steps: 0
+# leftovers (reported only, never removed): 0
+```
+- The `network:` lines appear only if you picked a service. They check the service is set to DHCP, not that it already has an address; `(no DHCP address yet: …)` after it means check the cable or DHCP server. TODO(verify) on a real Mac.
+- Problems show as `FAILED …` lines (a step that failed) or `VERIFY FAILED …` (still there afterwards), repeated under `# failed steps:`.
+- `echo $?` straight afterwards: `0` all good, `1` some steps failed (listed), `2` refused or cancelled (nothing changed).
+
+**Afterwards, check and report:**
+```bash
+ls "/Users/Shared/ItHurtsWhenIP-backups/"                # one folder per run (UTC time)
+ls "/Users/Shared/ItHurtsWhenIP-backups/<UTC time>/"     # plan.txt, rescue.log, network-before.txt, system/, users/
+networksetup -getinfo "<service>"                        # if you picked one: "DHCP Configuration"
+```
+Read-only leftover check: both commands should print nothing (TODO(verify) on a real install):
+```bash
+sudo find /Applications /Library /Users/*/Library /private/var/run /private/var/log /private/var/db/receipts \( -iname '*ithurtswhenip*' -o -iname '*ipswitcher*' -o -iname '*it-hurts-when-ip*' \) -print 2>/dev/null
+pkgutil --pkgs | grep -i -e ithurtswhenip -e ipswitcher
+```
+
+TODO(verify): `sudo bash` runs a downloaded (quarantined) `.command` without a Gatekeeper prompt; the in-app copy runs the same way.
+
 ## Per-phase test lists
 Claude adds a "what to test" list to each phase report and to the draft release notes. Tick through it and reply with results; Claude records them in `docs/PROGRESS.md`.
 
@@ -58,4 +117,4 @@ Work down this list; stop when it works. These are standard macOS commands, noth
    sudo rm -f com.apple.network.identification.plist com.apple.airport.preferences.plist
    ```
    Then restart. macOS rebuilds these files. TODO(verify) the file list against your macOS version before you're relying on it.
-6. **Remove the app completely** (from Phase 1 on): `sudo bash ~/Downloads/ithurtswhenip-rescue.command` and pick *Uninstall*.
+6. **Remove the app completely** (from Phase 1 on): `sudo bash ~/Downloads/ithurtswhenip-rescue.command` and pick `2` or `3` — see *Uninstalling (rescue script)* above.

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # build-pkg.sh — Build a single .pkg installer for
-# "It Hurts When IP" (app + helper + uninstaller)
+# "It Hurts When IP" (app + helper + rescue script)
 #
 # Normally run by scripts/build-macos.sh (Mac Studio, repo root), which
 # builds the prerequisites below, moves the pkg into release-out/ and
@@ -39,6 +39,10 @@ OUTPUT_PKG="ItHurtsWhenIP-${VERSION}.pkg"
 HELPER_BIN="helper-tool/com.ithurtswhenip.helper"
 HELPER_PLIST="helper-tool/com.ithurtswhenip.helper.plist"
 APP_BUNDLE="src-tauri/target/universal-apple-darwin/release/bundle/macos/${APP_NAME}.app"
+# The standalone rescue script (uninstall + network revert) is the only
+# uninstaller; it is copied unchanged into the app's Contents/Resources.
+RESCUE_NAME="ithurtswhenip-rescue.command"
+RESCUE_SRC="recovery/${RESCUE_NAME}"
 
 # --- Working directories ---
 WORK_DIR="installer-build"
@@ -66,6 +70,12 @@ fi
 if [ ! -d "${APP_BUNDLE}" ]; then
     echo "ERROR: App bundle not found at ${APP_BUNDLE}"
     echo "       Build the universal app first: npm run tauri build -- --target universal-apple-darwin"
+    exit 1
+fi
+
+if [ ! -f "${RESCUE_SRC}" ] || [ ! -s "${RESCUE_SRC}" ]; then
+    echo "ERROR: Rescue script not found (or empty) at ${RESCUE_SRC}"
+    echo "       It is the app's only uninstaller and must be bundled; run this script from the repo root"
     exit 1
 fi
 
@@ -102,64 +112,22 @@ chmod 644 "${PAYLOAD_DIR}/Library/LaunchDaemons/com.ithurtswhenip.helper.plist"
 # App bundle
 cp -R "${APP_BUNDLE}" "${PAYLOAD_DIR}/Applications/${APP_NAME}.app"
 
-# --- Bundle the uninstaller inside the .app ---
-echo "[4/7] Bundling uninstaller..."
+# --- Bundle the rescue script inside the .app ---
+# Copied before the bundle is signed in step 6, so the signature covers it.
+echo "[4/7] Bundling rescue script..."
 
-UNINSTALL_DIR="${PAYLOAD_DIR}/Applications/${APP_NAME}.app/Contents/Resources"
-mkdir -p "${UNINSTALL_DIR}"
+RESOURCES_DIR="${PAYLOAD_DIR}/Applications/${APP_NAME}.app/Contents/Resources"
+RESCUE_BUNDLED="${RESOURCES_DIR}/${RESCUE_NAME}"
+mkdir -p "${RESOURCES_DIR}"
 
-cat > "${UNINSTALL_DIR}/uninstall.command" << 'UNINSTALL_EOF'
-#!/bin/bash
-echo "============================================"
-echo " Uninstalling It Hurts When IP..."
-echo "============================================"
-echo ""
-
-# Stop and unload helper daemon
-if launchctl list 2>/dev/null | grep -q "com.ithurtswhenip.helper"; then
-    echo "Stopping helper daemon..."
-    sudo launchctl unload /Library/LaunchDaemons/com.ithurtswhenip.helper.plist 2>/dev/null
+# -X: no extended attributes (codesign rejects resource "detritus").
+cp -X "${RESCUE_SRC}" "${RESCUE_BUNDLED}"
+chmod 755 "${RESCUE_BUNDLED}"
+if ! cmp -s "${RESCUE_SRC}" "${RESCUE_BUNDLED}"; then
+    echo "ERROR: Bundled rescue script differs from ${RESCUE_SRC} after copying"
+    exit 1
 fi
-
-# Remove helper binary
-if [ -f "/Library/PrivilegedHelperTools/com.ithurtswhenip.helper" ]; then
-    sudo rm -f /Library/PrivilegedHelperTools/com.ithurtswhenip.helper
-    echo "  Removed helper binary"
-fi
-
-# Remove LaunchDaemon plist
-if [ -f "/Library/LaunchDaemons/com.ithurtswhenip.helper.plist" ]; then
-    sudo rm -f /Library/LaunchDaemons/com.ithurtswhenip.helper.plist
-    echo "  Removed LaunchDaemon"
-fi
-
-# Remove socket
-if [ -S "/var/run/com.ithurtswhenip.helper.sock" ]; then
-    sudo rm -f /var/run/com.ithurtswhenip.helper.sock
-    echo "  Removed socket"
-fi
-
-# Remove app from Applications
-if [ -d "/Applications/It Hurts When IP.app" ]; then
-    sudo rm -rf "/Applications/It Hurts When IP.app"
-    echo "  Removed app from Applications"
-fi
-
-# Remove app data
-if [ -d ~/Library/Application\ Support/com.ithurtswhenip.desktop ]; then
-    rm -rf ~/Library/Application\ Support/com.ithurtswhenip.desktop
-    echo "  Removed app data"
-fi
-
-# Remove log files
-sudo rm -f /var/log/com.ithurtswhenip.helper.log 2>/dev/null
-sudo rm -f /var/log/com.ithurtswhenip.helper.error.log 2>/dev/null
-
-echo ""
-echo "Uninstall complete. You can close this window."
-UNINSTALL_EOF
-
-chmod +x "${UNINSTALL_DIR}/uninstall.command"
+echo "  ${RESCUE_SRC} -> Contents/Resources/${RESCUE_NAME}"
 
 # --- Create preinstall script (handles upgrades) ---
 echo "[5/7] Creating installer scripts..."
@@ -181,6 +149,19 @@ rm -f /var/run/com.ithurtswhenip.helper.sock 2>/dev/null || true
 
 # Remove old helper binary (will be replaced)
 rm -f /Library/PrivilegedHelperTools/com.ithurtswhenip.helper 2>/dev/null || true
+
+# Stop and remove a legacy pre-rename helper (com.ipswitcher.helper) if one is
+# still installed, so two root helpers never run side by side. Fixed literal
+# paths only; every step tolerates "not present" and never fails the install.
+if ! launchctl bootout system/com.ipswitcher.helper 2>/dev/null; then
+    # Not loaded, or a macOS without bootout: fall back to unload.
+    if [ -f /Library/LaunchDaemons/com.ipswitcher.helper.plist ]; then
+        launchctl unload /Library/LaunchDaemons/com.ipswitcher.helper.plist 2>/dev/null || true
+    fi
+fi
+rm -f /Library/LaunchDaemons/com.ipswitcher.helper.plist 2>/dev/null || true
+rm -f /Library/PrivilegedHelperTools/com.ipswitcher.helper 2>/dev/null || true
+rm -f /var/run/com.ipswitcher.helper.sock 2>/dev/null || true
 
 # Forget stale pkg receipts from earlier identifiers (for upgrades from
 # pre-rename installs). The original pkg was com.ipswitcher.pkg and the
@@ -263,6 +244,6 @@ echo ""
 echo " Distribute this single .pkg file."
 echo " Users double-click → enter password → done."
 echo ""
-echo " To uninstall: Right-click app → Show Package Contents"
-echo "               → Contents → Resources → uninstall.command"
+echo " To uninstall (Terminal; add --plan first to preview, it changes nothing):"
+echo "   sudo bash \"/Applications/${APP_NAME}.app/Contents/Resources/${RESCUE_NAME}\""
 echo ""
