@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -771,6 +772,586 @@ const updateModal = {
     }
   },
 };
+
+// --- Uninstall modal (rescue script) ---
+//
+// Opened from the app menu ("Uninstall It Hurts When IP…") and the temporary
+// button by the signature; both only open this modal in the loading state.
+// It shows the rescue script's plan (read-only), lets the user tick Manual
+// services to switch to DHCP and/or restoring the recorded settings, re-plans
+// after every change so the list shown is what will run, and runs the
+// uninstall only after the red confirm button and the macOS password prompt.
+// Debug builds never run it (enforced in Rust): they return the command.
+//
+// States: closed · loading · empty · plan · running · done · refused · error · debug.
+// "cancelled" (password prompt dismissed) goes back to the plan with a banner.
+
+const RESCUE_QUIT_COUNTDOWN_SECS = 60;
+const RESCUE_RELEASES_URL = "https://github.com/jaylenjupp/it-hurts-when-ip/releases";
+const RESCUE_DEFAULT_COMMAND =
+  'sudo bash "/Applications/It Hurts When IP.app/Contents/Resources/ithurtswhenip-rescue.command"';
+const RESCUE_DOWNLOAD_COMMAND = "sudo bash ~/Downloads/ithurtswhenip-rescue.command";
+
+const rescue = {
+  state: "closed",
+  plan: null,
+  picks: new Set(),
+  restore: false,
+  replanning: false,
+  seq: 0,
+  run: null,
+  message: "",
+  banner: "",
+  canGoBack: false,
+  focusKey: "",
+  countdown: 0,
+  timer: null,
+  overlay: document.getElementById("rescue-modal-overlay"),
+  modal: document.getElementById("rescue-modal"),
+  title: document.getElementById("rescue-modal-title"),
+  body: document.getElementById("rescue-modal-body"),
+  buttons: document.getElementById("rescue-modal-buttons"),
+};
+
+function rescueEl(tag, className, text) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+// Once stage B has started, the only ways out are "Finish and quit" and the countdown.
+function rescueStageBPending() {
+  return rescue.state === "done" && rescue.run && rescue.run.stage_b_started;
+}
+
+function rescueCanClose() {
+  return rescue.state !== "closed" && rescue.state !== "running" && !rescueStageBPending();
+}
+
+function openRescue() {
+  if (rescue.state !== "closed") return;
+  rescue.plan = null;
+  rescue.picks = new Set();
+  rescue.restore = false;
+  rescue.run = null;
+  rescue.message = "";
+  rescue.focusKey = "";
+  rescue.overlay.classList.remove("hidden");
+  loadRescuePlan();
+}
+
+function closeRescue() {
+  if (!rescueCanClose()) return;
+  rescue.seq++; // drop any plan still on its way
+  rescue.state = "closed";
+  rescue.replanning = false;
+  rescue.overlay.classList.add("hidden");
+  rescue.modal.dataset.state = "closed";
+}
+
+// Fetches a fresh plan for the current choices. Stale replies are dropped.
+async function loadRescuePlan(banner = "") {
+  const mySeq = ++rescue.seq;
+  rescue.banner = banner;
+  if (rescue.state === "plan" && rescue.plan) {
+    rescue.replanning = true;
+  } else {
+    rescue.state = "loading";
+  }
+  renderRescue();
+
+  let plan;
+  try {
+    plan = await invoke("rescue_plan", {
+      dhcp: [...rescue.picks],
+      restoreJournal: rescue.restore,
+    });
+  } catch (error) {
+    if (mySeq !== rescue.seq) return;
+    rescue.replanning = false;
+    rescue.state = "error";
+    rescue.message = String(error);
+    rescue.canGoBack = rescue.plan !== null;
+    renderRescue();
+    return;
+  }
+  if (mySeq !== rescue.seq) return;
+  rescue.replanning = false;
+
+  if (plan.refused) {
+    rescue.state = "refused";
+    rescue.message = plan.refused;
+    renderRescue();
+    return;
+  }
+
+  // Drop choices the fresh plan no longer offers, then plan again without them.
+  const offered = new Set(plan.manual.map((m) => m.name));
+  const stale = [...rescue.picks].filter((name) => !offered.has(name));
+  const staleRestore = rescue.restore && !plan.journal_usable;
+  rescue.plan = plan;
+  if (stale.length || staleRestore) {
+    stale.forEach((name) => rescue.picks.delete(name));
+    if (staleRestore) rescue.restore = false;
+    rescue.state = "plan";
+    loadRescuePlan(banner);
+    return;
+  }
+
+  rescue.state = plan.nothing_to_remove ? "empty" : "plan";
+  renderRescue();
+}
+
+function rescueBackToPlan() {
+  rescue.picks = new Set();
+  rescue.restore = false;
+  rescue.plan = null;
+  rescue.focusKey = "cancel";
+  document.activeElement?.blur();
+  rescue.state = "loading";
+  loadRescuePlan();
+}
+
+async function confirmRescue() {
+  if (rescue.state !== "plan" || rescue.replanning) return;
+  rescue.state = "running";
+  rescue.banner = "";
+  rescue.focusKey = "cancel"; // never land back on the red button after a cancel
+  document.activeElement?.blur();
+  renderRescue();
+
+  let run;
+  try {
+    run = await invoke("rescue_uninstall", {
+      dhcp: [...rescue.picks],
+      restoreJournal: rescue.restore,
+    });
+  } catch (error) {
+    rescue.state = "error";
+    rescue.message = String(error);
+    rescue.canGoBack = true;
+    renderRescue();
+    return;
+  }
+
+  rescue.run = run;
+  switch (run.outcome) {
+    case "cancelled":
+      loadRescuePlan("You closed the password prompt. Nothing was changed.");
+      return;
+    case "not_executed":
+      rescue.state = "debug";
+      break;
+    case "refused":
+      rescue.state = "refused";
+      rescue.message = run.messages.join(" ") || "The rescue script refused to run.";
+      break;
+    case "ok":
+    case "partial":
+      rescue.state = "done";
+      break;
+    default:
+      rescue.state = "error";
+      rescue.message = run.messages.join(" ") || "The uninstall could not run.";
+      rescue.canGoBack = true;
+  }
+  renderRescue();
+  if (rescueStageBPending()) startRescueCountdown();
+}
+
+// Stage B (removing the app bundle) only finishes once the app has quit, and
+// gives up after 300 s; Rust also quits the app after 150 s as a backstop.
+function startRescueCountdown() {
+  clearInterval(rescue.timer);
+  rescue.countdown = RESCUE_QUIT_COUNTDOWN_SECS;
+  updateRescueCountdown();
+  rescue.timer = setInterval(() => {
+    rescue.countdown -= 1;
+    updateRescueCountdown();
+    if (rescue.countdown <= 0) {
+      clearInterval(rescue.timer);
+      rescueQuit();
+    }
+  }, 1000);
+}
+
+// Only the countdown text changes each second, so selected text stays selected.
+function updateRescueCountdown() {
+  const line = document.getElementById("rescue-countdown");
+  if (line) {
+    const n = Math.max(rescue.countdown, 0);
+    line.textContent = `The app closes in ${n} s so the uninstall can finish.`;
+  }
+}
+
+function rescueQuit() {
+  invoke("rescue_quit").catch((e) => console.error("[rescue_quit failed]", e));
+}
+
+// --- Uninstall modal: text for plan records and result lines ---
+
+const RESCUE_WRITE_KINDS = ["setdhcp", "setmanual", "unchanged", "skip"];
+
+const RESCUE_GROUPS = [
+  { title: "Stop", match: (r) => r.kind === "stop" || r.kind === "quit" },
+  { title: "Back up first", match: (r) => r.kind === "backup" },
+  {
+    title: "Change network settings",
+    match: (r) => r.kind === "network" && RESCUE_WRITE_KINDS.includes(r.sub_kind),
+  },
+  { title: "Remove", match: (r) => r.kind === "remove" },
+  { title: "Forget installer receipts", match: (r) => r.kind === "forget" },
+  {
+    title: "Notes",
+    match: (r) => r.kind === "note" && !(r.subject === "-" && r.detail === "nothing to remove"),
+  },
+  { title: "Found but not removed (reported only)", match: (r) => r.kind === "leftover" },
+  { title: "Other lines from the script", match: (r) => r.kind === "other" },
+];
+
+// "<mode>/<ip>/<mask>/<router>" as the script prints it, in words.
+function rescueViewText(view) {
+  const [mode, ip, mask, router] = String(view).split("/");
+  if (mode === "dhcp") return "DHCP";
+  if (mode === "manual") {
+    return `Manual ${ip} / ${mask}` + (router && router !== "-" ? `, router ${router}` : "");
+  }
+  if (mode === "missing") return "service no longer exists";
+  return mode || "unknown";
+}
+
+function rescueRecordText(r) {
+  switch (r.kind) {
+    case "stop":
+      return "Background helper " + r.subject;
+    case "quit":
+      return "Quit " + r.subject;
+    case "backup":
+      return r.sub_kind === "snapshot" ? `Network settings snapshot (${r.detail})` : r.subject;
+    case "remove":
+      return r.detail && r.detail !== "-" ? `${r.subject} (${r.detail})` : r.subject;
+    case "network":
+      if (r.sub_kind === "setdhcp") return `${r.subject}: switch to DHCP`;
+      if (r.sub_kind === "setmanual") {
+        return `${r.subject}: set back to ${r.detail.replace(/\s*source=\S+$/, "")}`;
+      }
+      return `${r.subject}: ${r.detail}`;
+    case "note":
+      return r.subject && r.subject !== "-" ? `${r.subject}: ${r.detail}` : r.detail;
+    case "forget":
+    case "leftover":
+      return r.subject;
+    default:
+      return r.detail;
+  }
+}
+
+const RESCUE_STEP_LABELS = {
+  BACKUP: "Back up",
+  NETWORK: "Network",
+  STOP: "Stop",
+  QUIT: "Quit",
+  REMOVE: "Remove",
+  FORGET: "Forget receipt",
+};
+
+function rescueStepText(s) {
+  if (s.kind === "VERIFY") {
+    return "Checked " + s.subject + (s.detail ? ` (${s.detail})` : "");
+  }
+  let text = `${RESCUE_STEP_LABELS[s.kind] || s.kind} ${s.subject}`;
+  if (s.detail && s.detail !== "-") text += ` (${s.detail})`;
+  if (s.reason) text += ` — ${s.reason}`;
+  return text;
+}
+
+function rescueStepFailed(s) {
+  return s.status === "failed" || s.status === "verify_failed";
+}
+
+function rescueConfirmLabel(plan) {
+  const parts = [];
+  const n = rescue.picks.size;
+  if (n) parts.push(`switch ${n} service${n === 1 ? "" : "s"} to DHCP`);
+  if (rescue.restore) {
+    const m = plan.records.filter(
+      (r) =>
+        r.kind === "network" &&
+        (r.sub_kind === "setdhcp" || r.sub_kind === "setmanual") &&
+        r.detail.includes("source=journal")
+    ).length;
+    // Recorded settings that already match are not rewritten, so 0 adds nothing.
+    if (m) parts.push(`restore ${m} service${m === 1 ? "" : "s"}`);
+  }
+  return "Uninstall" + (parts.length ? " and " + parts.join(" and ") : "");
+}
+
+// --- Uninstall modal: rendering ---
+
+function rescueButton(label, className, onClick, key, disabled = false) {
+  const b = rescueEl("button", className, label);
+  b.type = "button";
+  b.dataset.key = key;
+  b.disabled = disabled;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function rescueSelectable(text) {
+  return rescueEl("div", "rescue-path", text);
+}
+
+function rescueList(items, classFor) {
+  const ul = rescueEl("ul", "rescue-list");
+  items.forEach((item) => {
+    const li = rescueEl("li", classFor ? classFor(item) : "", item.text);
+    ul.appendChild(li);
+  });
+  return ul;
+}
+
+function rescueFallback(command) {
+  const box = rescueEl("div", "rescue-box");
+  box.appendChild(rescueEl("div", "rescue-muted", "Prefer Terminal, or the app is not working? Open Terminal and run:"));
+  box.appendChild(rescueSelectable(command || RESCUE_DEFAULT_COMMAND));
+  const missing = rescueEl("div", "rescue-muted");
+  missing.appendChild(document.createTextNode("If the script is missing, download ithurtswhenip-rescue.command from the "));
+  const link = rescueEl("button", "rescue-link", "Releases page");
+  link.type = "button";
+  link.dataset.key = "releases";
+  link.addEventListener("click", () => openUrl(RESCUE_RELEASES_URL));
+  missing.appendChild(link);
+  missing.appendChild(document.createTextNode(" and run:"));
+  box.appendChild(missing);
+  box.appendChild(rescueSelectable(RESCUE_DOWNLOAD_COMMAND));
+  return box;
+}
+
+function rescueCheckbox(key, checked, disabled, title, detail, onChange) {
+  const label = rescueEl("label", "rescue-check");
+  const input = rescueEl("input");
+  input.type = "checkbox";
+  input.checked = checked;
+  input.disabled = disabled;
+  input.dataset.key = key;
+  input.addEventListener("change", () => onChange(input.checked));
+  const text = rescueEl("span");
+  text.appendChild(rescueEl("span", "", title));
+  if (detail) text.appendChild(rescueEl("span", "rescue-check-detail", " " + detail));
+  label.appendChild(input);
+  label.appendChild(text);
+  return label;
+}
+
+function renderRescuePlanBody(body, plan) {
+  const busy = rescue.replanning;
+  body.appendChild(
+    rescueEl(
+      "p",
+      "",
+      "This removes the app, its background helper and its settings (and old IP Switcher files), and backs up everything it removes first."
+    )
+  );
+
+  // Network choices.
+  body.appendChild(rescueEl("div", "rescue-section-title", "Network settings"));
+  const net = rescueEl("div", "rescue-box");
+  if (plan.manual.length) {
+    net.appendChild(rescueEl("div", "rescue-muted", "Services on Manual (static) settings. Tick one to switch it to DHCP:"));
+    plan.manual.forEach((m) => {
+      const detail = `${m.ip} / ${m.mask}` + (m.router && m.router !== "-" ? `, router ${m.router}` : "");
+      net.appendChild(
+        rescueCheckbox("dhcp:" + m.name, rescue.picks.has(m.name), busy, m.name, detail, (on) => {
+          if (on) rescue.picks.add(m.name);
+          else rescue.picks.delete(m.name);
+          loadRescuePlan();
+        })
+      );
+    });
+  } else {
+    net.appendChild(rescueEl("div", "rescue-muted", "No enabled service is on Manual (static) settings."));
+  }
+  if (plan.journal_usable) {
+    const n = plan.journal.length;
+    net.appendChild(
+      rescueCheckbox(
+        "restore",
+        rescue.restore,
+        busy,
+        `Restore the settings recorded before the app first changed them (${n} service${n === 1 ? "" : "s"}, IPv4 only)`,
+        "",
+        (on) => {
+          rescue.restore = on;
+          loadRescuePlan();
+        }
+      )
+    );
+    net.appendChild(
+      rescueList(
+        plan.journal.map((j) => ({
+          text: `${j.name}: recorded ${rescueViewText(j.original)}, now ${rescueViewText(j.current)}`,
+        })),
+        () => "rescue-muted"
+      )
+    );
+  }
+  net.appendChild(rescueEl("div", "", "Network settings are otherwise left exactly as they are."));
+  body.appendChild(net);
+
+  // The plan, grouped.
+  body.appendChild(rescueEl("div", "rescue-section-title", busy ? "What will happen (updating…)" : "What will happen"));
+  if (plan.backup_folder) {
+    body.appendChild(rescueEl("div", "rescue-muted", "Backups go to:"));
+    body.appendChild(rescueSelectable(plan.backup_folder));
+  }
+  RESCUE_GROUPS.forEach((group) => {
+    const items = plan.records.filter(group.match);
+    if (!items.length) return;
+    body.appendChild(rescueEl("div", "rescue-group-title", group.title));
+    body.appendChild(rescueList(items.map((r) => ({ text: rescueRecordText(r) }))));
+  });
+  plan.notices.forEach((n) => body.appendChild(rescueEl("div", "rescue-muted", "Note: " + n)));
+
+  body.appendChild(rescueFallback(plan.terminal_command));
+}
+
+function renderRescueResultBody(body, run) {
+  const pending = rescueStageBPending();
+  if (run.backup_folder) {
+    body.appendChild(rescueEl("div", "rescue-muted", "Backup folder:"));
+    body.appendChild(rescueSelectable(run.backup_folder));
+  }
+  if (run.log_path) {
+    body.appendChild(rescueEl("div", "rescue-muted", "Full result:"));
+    body.appendChild(rescueSelectable(run.log_path));
+  }
+  if (pending) {
+    body.appendChild(rescueEl("div", "rescue-countdown", ""));
+    body.lastChild.id = "rescue-countdown";
+    body.appendChild(
+      rescueEl(
+        "div",
+        "",
+        "After the app closes, the rescue script removes the app and your settings in the background and adds its result to the log above."
+      )
+    );
+  }
+  run.messages.forEach((m) => body.appendChild(rescueEl("div", "rescue-error", m)));
+
+  const failed = run.steps.filter(rescueStepFailed);
+  const rest = run.steps.filter((s) => !rescueStepFailed(s));
+  if (failed.length) {
+    body.appendChild(rescueEl("div", "rescue-section-title", `Failed (${failed.length})`));
+    body.appendChild(rescueList(failed.map((s) => ({ text: rescueStepText(s) })), () => "failed"));
+  }
+  if (rest.length) {
+    body.appendChild(rescueEl("div", "rescue-section-title", "Done"));
+    body.appendChild(rescueList(rest.map((s) => ({ text: rescueStepText(s) })), () => "ok"));
+  }
+}
+
+function renderRescue() {
+  const { body, buttons } = rescue;
+  // Remember which control had focus, so a re-plan (which rebuilds the DOM and
+  // briefly disables the checkboxes) gives it back afterwards.
+  const active = document.activeElement;
+  if (active && rescue.modal.contains(active) && active.dataset.key) {
+    rescue.focusKey = active.dataset.key;
+  }
+  rescue.modal.dataset.state = rescue.state;
+  body.replaceChildren();
+  buttons.replaceChildren();
+  rescue.title.textContent = "Uninstall It Hurts When IP";
+
+  if (rescue.banner && (rescue.state === "plan" || rescue.state === "loading")) {
+    body.appendChild(rescueEl("div", "rescue-banner", rescue.banner));
+  }
+
+  const cancel = (label = "Cancel") => rescueButton(label, "", closeRescue, "cancel");
+  const back = () => rescueButton("Back to plan", "", rescueBackToPlan, "back");
+  let defaultKey = "cancel";
+
+  switch (rescue.state) {
+    case "loading":
+      body.appendChild(rescueEl("p", "rescue-muted", "Checking what is installed…"));
+      buttons.appendChild(cancel());
+      break;
+
+    case "empty":
+      body.appendChild(rescueEl("p", "", "It Hurts When IP is not installed on this Mac: there is nothing to remove."));
+      buttons.appendChild(cancel("Close"));
+      break;
+
+    case "plan":
+      renderRescuePlanBody(body, rescue.plan);
+      buttons.appendChild(cancel());
+      buttons.appendChild(
+        rescueButton(rescueConfirmLabel(rescue.plan), "rescue-danger", confirmRescue, "confirm", rescue.replanning)
+      );
+      break;
+
+    case "running":
+      body.appendChild(rescueEl("p", "", "Waiting for your administrator password. macOS asks for it in a separate window."));
+      body.appendChild(rescueEl("p", "rescue-muted", "Nothing changes until you enter it. Keep this window open."));
+      buttons.appendChild(rescueButton("Uninstalling…", "", () => {}, "running", true));
+      defaultKey = "";
+      break;
+
+    case "done": {
+      const run = rescue.run;
+      const failed = run.outcome === "partial";
+      rescue.title.textContent = failed ? "Uninstall finished with problems" : "Uninstall finished";
+      renderRescueResultBody(body, run);
+      if (rescueStageBPending()) {
+        buttons.appendChild(rescueButton("Finish and quit", "rescue-primary", rescueQuit, "quit"));
+        defaultKey = "quit";
+      } else {
+        buttons.appendChild(cancel("Close"));
+      }
+      break;
+    }
+
+    case "refused":
+      rescue.title.textContent = "Uninstall did not run";
+      body.appendChild(rescueEl("p", "rescue-error", rescue.message));
+      body.appendChild(rescueEl("p", "", "Nothing was changed."));
+      buttons.appendChild(cancel("Close"));
+      buttons.appendChild(back());
+      break;
+
+    case "error":
+      rescue.title.textContent = "Uninstall could not run";
+      body.appendChild(rescueEl("p", "rescue-error", rescue.message));
+      body.appendChild(rescueFallback(rescue.plan ? rescue.plan.terminal_command : ""));
+      buttons.appendChild(cancel("Close"));
+      if (rescue.canGoBack) buttons.appendChild(back());
+      break;
+
+    case "debug":
+      rescue.title.textContent = "Debug build: not executed";
+      body.appendChild(rescueEl("p", "", "Debug builds never run the uninstall. A release build would run exactly this command (one argument per block):"));
+      rescue.run.argv.forEach((arg) => body.appendChild(rescueSelectable(arg)));
+      buttons.appendChild(cancel("Close"));
+      buttons.appendChild(back());
+      break;
+  }
+
+  updateRescueCountdown();
+  const again =
+    rescue.focusKey && rescue.modal.querySelector(`[data-key="${CSS.escape(rescue.focusKey)}"]`);
+  if (again && again.disabled) return; // re-planning: focus comes back when it is enabled again
+  const target = again || (defaultKey && buttons.querySelector(`[data-key="${defaultKey}"]`));
+  if (target) target.focus();
+}
+
+document.getElementById("open-uninstall").addEventListener("click", openRescue);
+listen("rescue-open", () => openRescue()).catch((e) => console.error("[rescue-open listen failed]", e));
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || rescue.state === "closed") return;
+  e.preventDefault();
+  if (rescueCanClose()) closeRescue();
+});
 
 // Initialize once the DOM is ready
 document.addEventListener("DOMContentLoaded", () => updateModal.init());

@@ -90,7 +90,7 @@ Because the privileged helper applies the changes, none of these actions prompt 
 
 ### macOS
 
-The app comes with a rescue script that removes it completely, even if the app or its helper is broken. (An **Uninstall…** command inside the app is coming in the next version.)
+The app comes with a rescue script that removes it completely, even if the app or its helper is broken. (Inside the app, choose **It Hurts When IP → Uninstall It Hurts When IP…** from the menu bar, or click **Uninstall…** at the bottom of the window: it shows the same plan and asks for your Mac's administrator password once.)
 
 Open **Terminal** and run:
 

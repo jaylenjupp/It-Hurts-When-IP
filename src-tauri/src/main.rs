@@ -5,7 +5,7 @@
 use std::fs;
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 mod build_info;
 mod platform;
@@ -188,6 +188,55 @@ fn get_build_info() -> build_info::BuildInfo {
     build_info::build_info()
 }
 
+// --- Uninstall (rescue script; never the helper) ---
+
+/// Seconds after a run that started stage B before the app quits on its own,
+/// even if the window never asks to (the UI counts down 60 s first). The
+/// rescue script's stage B gives up after 300 s if the app is still open.
+const UNINSTALL_QUIT_BACKSTOP_SECS: u64 = 150;
+
+/// Read-only plan for the given network choices.
+#[tauri::command]
+async fn rescue_plan(
+    dhcp: Vec<String>,
+    restore_journal: bool,
+) -> Result<platform::RescuePlan, String> {
+    tauri::async_runtime::spawn_blocking(move || platform::rescue_plan(dhcp, restore_journal))
+        .await
+        .map_err(|e| format!("The plan could not be made: {}", e))?
+}
+
+/// Re-checks the choices against a fresh plan, then runs the uninstall with
+/// one macOS administrator prompt (release builds; debug builds only return
+/// the command). If stage B started, the app quits by itself after
+/// UNINSTALL_QUIT_BACKSTOP_SECS at the latest.
+#[tauri::command]
+async fn rescue_uninstall(
+    app: tauri::AppHandle,
+    dhcp: Vec<String>,
+    restore_journal: bool,
+) -> Result<platform::RescueRun, String> {
+    let run = tauri::async_runtime::spawn_blocking(move || {
+        platform::rescue_uninstall(dhcp, restore_journal)
+    })
+    .await
+    .map_err(|e| format!("The uninstall could not be started: {}", e))??;
+    if run.quit_required() {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(UNINSTALL_QUIT_BACKSTOP_SECS));
+            app.exit(0);
+        });
+    }
+    Ok(run)
+}
+
+/// "Finish and quit" after an uninstall, so the rescue script can remove the
+/// app bundle.
+#[tauri::command]
+fn rescue_quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 // Whether the saved top-left (x, y) lands on a monitor connected *right now*.
 //
 // Works on both platforms because the saved coords and the monitor rects come
@@ -219,6 +268,14 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
+        .menu(platform::app_menu)
+        .on_menu_event(|app, event| {
+            // The menu item only opens the Uninstall window (plan loading);
+            // nothing else happens until the user confirms there.
+            if event.id() == platform::MENU_UNINSTALL_ID {
+                app.emit("rescue-open", ()).ok();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_interfaces,
             get_ip_info,
@@ -232,6 +289,9 @@ fn main() {
             dismiss_update_prompt,
             get_update_prompt_dismissed_at,
             get_build_info,
+            rescue_plan,
+            rescue_uninstall,
+            rescue_quit,
         ])
         .setup(|app| {
             use std::sync::atomic::{AtomicBool, Ordering};

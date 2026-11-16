@@ -1,6 +1,7 @@
 // macOS implementation: queries network state via `networksetup` and applies
 // changes through the privileged helper daemon (com.ithurtswhenip.helper)
-// over a Unix socket.
+// over a Unix socket. The in-app uninstall (`macos/rescue.rs`) never uses the
+// helper: it runs the bundled rescue script.
 //
 // Reads go through a `CommandRunner` with argv only (no shell) and the pure
 // parsers in `macos/parse.rs`.
@@ -11,9 +12,13 @@
 // root helper, so a dev build must never be able to reach it.
 
 mod parse;
+mod rescue;
 
 use super::runner::{CmdOutput, CommandRunner, SystemRunner};
 use parse::IpInfo;
+
+// In-app uninstall through the bundled rescue script (no helper involved).
+pub use rescue::{rescue_plan, rescue_uninstall, RescuePlan, RescueRun};
 
 #[cfg(not(any(debug_assertions, test)))]
 use std::io::{BufRead, BufReader, Write};
@@ -78,6 +83,35 @@ pub fn set_static_ip(
         &subnet,
         &gateway,
     )
+}
+
+// --- App menu ---
+
+/// Id of the "Uninstall It Hurts When IP…" menu item.
+pub const MENU_UNINSTALL_ID: &str = "ihwip-uninstall";
+
+/// Tauri's default macOS menu, plus "Uninstall It Hurts When IP…" in the app
+/// menu, after About.
+pub fn app_menu<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+) -> tauri::Result<tauri::menu::Menu<R>> {
+    use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem};
+
+    let menu = Menu::default(handle)?;
+    if let Some(MenuItemKind::Submenu(app_submenu)) = menu.items()?.first() {
+        let uninstall = MenuItem::with_id(
+            handle,
+            MENU_UNINSTALL_ID,
+            "Uninstall It Hurts When IP…",
+            true,
+            None::<&str>,
+        )?;
+        // Default app menu: About, separator, Services, … Insert after the
+        // first separator: About, separator, Uninstall…, separator, Services.
+        app_submenu.insert(&uninstall, 2)?;
+        app_submenu.insert(&PredefinedMenuItem::separator(handle)?, 3)?;
+    }
+    Ok(menu)
 }
 
 // --- Which networksetup to run ---
