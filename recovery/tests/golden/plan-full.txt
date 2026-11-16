@@ -15,8 +15,8 @@ BACKUP	dir	/Users/alice/Library/Application Support/com.ithurtswhenip.desktop	us
 BACKUP	file	/Users/alice/Library/Preferences/com.ithurtswhenip.desktop.plist	users/alice/Library/Preferences/com.ithurtswhenip.desktop.plist
 BACKUP	dir	/Users/alice/Library/Logs/com.ithurtswhenip.desktop	users/alice/Library/Logs/com.ithurtswhenip.desktop
 NETWORK	manual	Dante Primary	ip=192.168.10.21 mask=255.255.255.0 router=- selected=no
+NOTE	info	journal	found: 0 service(s) recorded; restore covers IPv4 settings only (DNS servers and search domains are not restored by this version)
 NETWORK	choice	-	leave
-NOTE	info	journal	found; restore arrives in the next build
 STOP	launchd	com.ithurtswhenip.helper	loaded
 REMOVE	file	/Library/LaunchDaemons/com.ithurtswhenip.helper.plist	-
 REMOVE	file	/Library/PrivilegedHelperTools/com.ithurtswhenip.helper	-
