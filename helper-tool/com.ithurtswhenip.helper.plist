@@ -16,6 +16,13 @@
     <key>KeepAlive</key>
     <true/>
 
+    <!-- Umask 63 = octal 077: files the helper creates are owner-only by
+         default, so the socket is never wider than 0660 between bind() and
+         the helper's chown/chmod. Anything the helper creates later must set
+         its mode explicitly. -->
+    <key>Umask</key>
+    <integer>63</integer>
+
     <key>StandardOutPath</key>
     <string>/var/log/com.ithurtswhenip.helper.log</string>
 
