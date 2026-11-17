@@ -1,0 +1,16 @@
+# It Hurts When IP rescue script, version 1
+# mode: plan
+# repair: service:Dante Primary
+# test root: <ROOT>
+# backup folder: /Users/Shared/ItHurtsWhenIP-backups/20261115T120000Z
+# plan only: nothing has been changed
+REPAIR	tier	service	Dante Primary
+BACKUP	snapshot	network	network-before.txt
+BACKUP	snapshot	Dante Primary	service-before.txt
+REPAIR	current	Dante Primary	now=manual/192.168.10.21/255.255.255.0/- dns=10.0.0.1,10.0.0.2 search=show.example
+REPAIR	setdhcp	Dante Primary	was=manual/192.168.10.21/255.255.255.0/-
+REPAIR	cleardns	Dante Primary	was=10.0.0.1,10.0.0.2
+REPAIR	clearsearch	Dante Primary	was=show.example
+REPAIR	disable	Dante Primary	-
+REPAIR	enable	Dante Primary	-
+# summary: backup=2 repair=5 leave=0

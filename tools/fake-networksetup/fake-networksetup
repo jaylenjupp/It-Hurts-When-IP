@@ -19,6 +19,8 @@
 #            -getinfo -getdnsservers -getsearchdomains -setmanual -setdhcp
 #            -setdnsservers -setsearchdomains -setnetworkserviceenabled
 #            -version (and a "fake-log" helper subcommand)
+# Optional fixture files: serviceorder.txt (printed by -listnetworkserviceorder)
+# and dns/<Service>.txt, search/<Service>.txt (starting values, one per line).
 # Output text mirrors real networksetup closely enough for parser tests.
 # An unknown service exits 4 with two lines on stdout, copied from the real
 # capture in fixtures/mac-studio/errors/getinfo-nonexistent.*. The same text is
@@ -41,7 +43,12 @@ if [[ ! -f "$STATE/services.txt" ]]; then
     mkdir -p "$STATE/info" "$STATE/dns" "$STATE/search" || exit 1
     cp "$FIXTURES/services.txt" "$STATE/services.txt" 2>/dev/null || { echo "fake-networksetup: missing $FIXTURES/services.txt" >&2; exit 1; }
     cp "$FIXTURES/hardwareports.txt" "$STATE/hardwareports.txt" 2>/dev/null || true
+    cp "$FIXTURES/serviceorder.txt" "$STATE/serviceorder.txt" 2>/dev/null || true
     cp "$FIXTURES/info/"*.txt "$STATE/info/" 2>/dev/null || true
+    # Optional starting DNS servers / search domains, one file per service
+    # (same file names as info/), one value per line.
+    cp "$FIXTURES/dns/"*.txt "$STATE/dns/" 2>/dev/null || true
+    cp "$FIXTURES/search/"*.txt "$STATE/search/" 2>/dev/null || true
     : > "$LOG"
 fi
 
@@ -100,15 +107,28 @@ case "$cmd" in
         cat "$STATE/services.txt"
         ;;
     -listnetworkserviceorder)
-        echo "An asterisk (*) denotes that a network service is disabled."
-        n=1
-        tail -n +2 "$STATE/services.txt" | while IFS= read -r line; do
-            name="${line#\*}"
-            echo "($n) $line"
-            echo "(Hardware Port: $name, Device: fake$n)"
-            echo
-            n=$((n + 1))
-        done
+        # A captured serviceorder.txt is printed as it is (it does not follow
+        # later -setnetworkserviceenabled calls). Otherwise each service gets
+        # the device of the hardware port with the same name, or an empty
+        # device (like a VPN). Disabled services print "(*) Name" -
+        # TODO(verify) on a Mac with a disabled service.
+        if [[ -f "$STATE/serviceorder.txt" ]]; then
+            cat "$STATE/serviceorder.txt"
+        else
+            echo "An asterisk (*) denotes that a network service is disabled."
+            n=1
+            tail -n +2 "$STATE/services.txt" | while IFS= read -r line; do
+                name="${line#\*}"
+                dev="$(awk -v want="Hardware Port: $name" '
+                    $0 == want { hit = 1; next }
+                    hit && /^Device: / { sub(/^Device: /, ""); print; exit }
+                    /^Hardware Port: / { hit = 0 }' "$STATE/hardwareports.txt" 2>/dev/null)"
+                if [[ "$line" == \** ]]; then echo "(*) $name"; else echo "($n) $name"; fi
+                echo "(Hardware Port: $name, Device: $dev)"
+                echo
+                n=$((n + 1))
+            done
+        fi
         ;;
     -listallhardwareports)
         cat "$STATE/hardwareports.txt"

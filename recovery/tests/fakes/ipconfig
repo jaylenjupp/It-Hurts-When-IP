@@ -1,0 +1,33 @@
+#!/bin/bash
+# Fake ipconfig for recovery/tests. Never touches a real interface.
+#
+# Calls: every argv is appended to $IHWIP_FAKE_CALLS (if set).
+# Supports: ipconfig set <device> DHCP (prints nothing, exits 0, like macOS).
+# IHWIP_FAKE_IPCONFIG_FAIL=<dev>[,<dev>...] makes those devices fail (exit 1,
+# message on stderr).
+
+set -u
+
+root="${IHWIP_ROOT:-}"
+case "$root" in
+    "" | /)
+        echo "fake ipconfig: IHWIP_ROOT must point at a fake root" >&2
+        exit 98
+        ;;
+esac
+
+if [ -n "${IHWIP_FAKE_CALLS:-}" ]; then
+    { printf '%q ' ipconfig "$@"; echo; } >>"$IHWIP_FAKE_CALLS"
+fi
+
+if [ $# -ne 3 ] || [ "$1" != "set" ] || [ -z "$2" ] || [ "$3" != "DHCP" ]; then
+    echo "fake ipconfig: only 'ipconfig set <device> DHCP' is supported" >&2
+    exit 64
+fi
+case ",${IHWIP_FAKE_IPCONFIG_FAIL:-}," in
+    *",$2,"*)
+        echo "ipconfig: set if $2 failed, (os/kern) failure" >&2
+        exit 1
+        ;;
+esac
+exit 0

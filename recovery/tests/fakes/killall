@@ -1,0 +1,25 @@
+#!/bin/bash
+# Fake killall for recovery/tests. Never signals real processes.
+#
+# Calls: every argv is appended to $IHWIP_FAKE_CALLS (if set).
+# Supports: killall -HUP mDNSResponder (prints nothing, exits 0).
+
+set -u
+
+root="${IHWIP_ROOT:-}"
+case "$root" in
+    "" | /)
+        echo "fake killall: IHWIP_ROOT must point at a fake root" >&2
+        exit 98
+        ;;
+esac
+
+if [ -n "${IHWIP_FAKE_CALLS:-}" ]; then
+    { printf '%q ' killall "$@"; echo; } >>"$IHWIP_FAKE_CALLS"
+fi
+
+if [ $# -ne 2 ] || [ "$1" != "-HUP" ] || [ "$2" != "mDNSResponder" ]; then
+    echo "fake killall: only 'killall -HUP mDNSResponder' is supported" >&2
+    exit 64
+fi
+exit 0

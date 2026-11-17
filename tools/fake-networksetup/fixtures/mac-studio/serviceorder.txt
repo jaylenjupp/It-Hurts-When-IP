@@ -1,0 +1,28 @@
+An asterisk (*) denotes that a network service is disabled.
+(1) Ethernet
+(Hardware Port: Ethernet, Device: en0)
+
+(2) Wi-Fi
+(Hardware Port: Wi-Fi, Device: en1)
+
+(3) LAN USB Port
+(Hardware Port: USB 10/100/1000 LAN, Device: en10)
+
+(4) USB Audio Device (R)
+(Hardware Port: USB 10/100/1000 LAN, Device: en11)
+
+(5) USB 10/100/1000 LAN
+(Hardware Port: USB 10/100/1000 LAN, Device: en12)
+
+(6) RNDIS/Ethernet Gadget
+(Hardware Port: RNDIS/Ethernet Gadget, Device: en18)
+
+(7) iPhone USB
+(Hardware Port: iPhone USB, Device: en14)
+
+(8) Thunderbolt Bridge
+(Hardware Port: Thunderbolt Bridge, Device: bridge0)
+
+(9) VPN Service
+(Hardware Port: com.example.vpn, Device: )
+

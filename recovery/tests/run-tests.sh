@@ -11,13 +11,14 @@
 #    (kept, and its path printed, if a test fails).
 #  - The rescue script only ever runs with IHWIP_ROOT=<fake tree in that folder>
 #    and fake tools, under a PATH whose first entry holds failing stubs for
-#    launchctl, pkgutil, networksetup, pkill, killall, osascript and sudo
+#    launchctl, pkgutil, networksetup, pkill, killall, ipconfig, dscacheutil,
+#    osascript and sudo
 #    (each prints "REAL TOOL REACHED", logs to a marker file and exits 99).
 #  - The only runs without IHWIP_ROOT are --help and --version.
 #  - Guards about real root or a missing IHWIP_ROOT are tested by sourcing the
 #    script and calling apply_guards / mode_allowed directly, which runs nothing.
 #    The journal parser is unit-tested the same way (sourced, parse only).
-#  - The menu and the UNINSTALL prompt are driven from a file on stdin with the
+#  - The menu and the UNINSTALL/REPAIR prompts are driven from a file on stdin with the
 #    test-mode-only IHWIP_TEST_STDIN_TTY=1.
 #  - --wait-pid tests wait on `sleep` processes this runner starts itself. Every
 #    exit path (EXIT/INT/TERM/HUP trap) stops those sleepers and waits for (or,
@@ -49,7 +50,8 @@ for arg in "$@"; do
     esac
 done
 
-for f in "$SCRIPT" "$FAKE_NS" "$FAKES/launchctl" "$FAKES/pkgutil" "$FAKES/pgrep" "$FAKES/pkill"; do
+for f in "$SCRIPT" "$FAKE_NS" "$FAKES/launchctl" "$FAKES/pkgutil" "$FAKES/pgrep" "$FAKES/pkill" \
+    "$FAKES/ipconfig" "$FAKES/dscacheutil" "$FAKES/killall"; do
     if [ ! -x "$f" ]; then
         echo "missing or not executable: $f" >&2
         exit 2
@@ -163,7 +165,7 @@ MARKER="$SUITE/REAL_TOOL_REACHED.log"
 ALL_OUT="$SUITE/all-output.log"
 STUBS="$SUITE/stubs"
 mkdir "$STUBS" || exit 2
-for tool in launchctl pkgutil networksetup pkill killall osascript sudo; do
+for tool in launchctl pkgutil networksetup pkill killall ipconfig dscacheutil osascript sudo; do
     {
         echo '#!/bin/bash'
         # shellcheck disable=SC2016 # $* belongs in the generated stub
@@ -235,7 +237,11 @@ reset_env() {
         "IHWIP_PKGUTIL=$FAKES/pkgutil"
         "IHWIP_PGREP=$FAKES/pgrep"
         "IHWIP_PKILL=$FAKES/pkill"
+        "IHWIP_IPCONFIG=$FAKES/ipconfig"
+        "IHWIP_DSCACHEUTIL=$FAKES/dscacheutil"
+        "IHWIP_KILLALL=$FAKES/killall"
         "IHWIP_NOW=$NOW"
+        "IHWIP_REPAIR_WAIT=1"
         "IHWIP_FAKE_STATE=$T/ns-state"
         "IHWIP_FAKE_FIXTURES=$FIXTURES_ROOT/default"
         "IHWIP_FAKE_CALLS=$T/calls.log"
@@ -290,7 +296,7 @@ collect_output() {
 }
 
 # check_run <stdin file> <args...>: the rules every fake-root run must meet.
-# A run that can change things (--uninstall, or a menu fed from a file) must
+# A run that can change things (--uninstall, --repair, or a menu fed from a file) must
 # use the fakes for every tool.
 check_run() {
     local input="$1" root a v val can_change=0
@@ -298,7 +304,9 @@ check_run() {
     env_has IHWIP_ROOT || abort "run_rescue without IHWIP_ROOT"
     root=$(env_get IHWIP_ROOT)
     for a in "$@"; do
-        if [ "$a" = "--uninstall" ]; then can_change=1; fi
+        case "$a" in
+            --uninstall | --repair | --repair=*) can_change=1 ;;
+        esac
     done
     if [ "$input" != "/dev/null" ]; then can_change=1; fi
     case "$root" in
@@ -310,7 +318,7 @@ check_run() {
             ;;
     esac
     if [ "$can_change" -eq 1 ]; then
-        for v in IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL; do
+        for v in IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL IHWIP_IPCONFIG IHWIP_DSCACHEUTIL IHWIP_KILLALL; do
             val=$(env_get "$v") || abort "a run that can change things without $v"
             case "$val" in
                 "$FAKES"/* | "$FAKE_NS") ;;
@@ -389,8 +397,9 @@ run_probe() {
         mode_allowed "$3" "$2"
         tty=no
         if stdin_is_terminal; then tty=yes; fi
-        printf "R=[%s] TEST_MODE=%s NS=%s LAUNCHCTL=%s PKGUTIL=%s PGREP=%s PKILL=%s ROOTVAR=%s TTY=%s WAIT=%s\n" \
-            "$R" "$TEST_MODE" "$NS" "$LAUNCHCTL" "$PKGUTIL" "$PGREP" "$PKILL" "${IHWIP_ROOT-unset}" "$tty" "$WAIT_TIMEOUT"
+        printf "R=[%s] TEST_MODE=%s NS=%s LAUNCHCTL=%s PKGUTIL=%s PGREP=%s PKILL=%s ROOTVAR=%s TTY=%s WAIT=%s IPCONFIG=%s DSCACHEUTIL=%s KILLALL=%s RWAIT=%s\n" \
+            "$R" "$TEST_MODE" "$NS" "$LAUNCHCTL" "$PKGUTIL" "$PGREP" "$PKILL" "${IHWIP_ROOT-unset}" "$tty" "$WAIT_TIMEOUT" \
+            "$IPCONFIG" "$DSCACHEUTIL" "$KILLALL" "$REPAIR_WAIT"
     ' probe "$SCRIPT" "$1" "$2" >"$T/out.txt" 2>"$T/err.txt" </dev/null
     RC=$?
     collect_output
@@ -497,17 +506,20 @@ calls_lack() {
 }
 
 no_mutating_calls() {
-    if [ -f "$T/calls.log" ] && grep -Eq '^(launchctl (bootout|unload)|pkgutil --forget|pkill) ' "$T/calls.log"; then
-        bad "mutating fake call(s): $(grep -E '^(launchctl (bootout|unload)|pkgutil --forget|pkill) ' "$T/calls.log" | tr '\n' ';')"
+    if [ -f "$T/calls.log" ] && grep -Eq '^(launchctl (bootout|unload)|pkgutil --forget|pkill|ipconfig|dscacheutil|killall) ' "$T/calls.log"; then
+        bad "mutating fake call(s): $(grep -E '^(launchctl (bootout|unload)|pkgutil --forget|pkill|ipconfig|dscacheutil|killall) ' "$T/calls.log" | tr '\n' ';')"
     fi
     ns_no_writes
 }
+
+# NS_READS: networksetup subcommands that only read.
+NS_READS='^networksetup -(listallnetworkservices|getinfo|listallhardwareports|listnetworkserviceorder|getdnsservers|getsearchdomains)( |$)'
 
 # ns_no_writes: every networksetup call (if any) was a read.
 ns_no_writes() {
     local log="$T/ns-state/calls.log" other
     [ -f "$log" ] || return 0
-    other=$(grep -Ev '^networksetup -(listallnetworkservices|getinfo)( |$)' "$log")
+    other=$(grep -Ev "$NS_READS" "$log")
     if [ -n "$other" ]; then bad "networksetup calls that are not read-only: $(printf '%s' "$other" | tr '\n' ';')"; fi
 }
 
@@ -528,7 +540,7 @@ argv_line() {
 ns_writes() {
     local log="$T/ns-state/calls.log"
     [ -f "$log" ] || return 0
-    grep -Ev '^networksetup -(listallnetworkservices|getinfo)( |$)' "$log"
+    grep -Ev "$NS_READS" "$log"
 }
 
 # writes_are <argv line>...: every networksetup write so far, exactly and in order.
@@ -1119,7 +1131,7 @@ test_refusals() {
     refusal "IHWIP_WAIT_TIMEOUT must be 1 to 600" --plan
     env_set "IHWIP_WAIT_TIMEOUT=5s"
     refusal "IHWIP_WAIT_TIMEOUT must be 1 to 600" --plan
-    refusal "network repair arrives in a later version" --repair soft
+    refusal "--repair full (full network reset) is not part of this version" --repair full
     refusal "missing value for --log" --plan --log
     refusal "--log: folder does not exist" --plan --log "$T/no-such-dir/rescue.log"
     tree_sum "$ROOT" >"$T/after.sum"
@@ -1350,6 +1362,11 @@ test_help_version() {
     out_has "numbered menu"
     out_has "--log <path>"
     out_has "--yes"
+    out_has "--repair soft"
+    out_has "--repair service:\"<service>\""
+    out_has "type REPAIR"
+    out_has "--repair full         A full network reset is not part of this version."
+    out_lacks "arrives in a later version"
     out_lacks "not available in this build"
     run_rescue_bare --version
     assert_rc 0
@@ -1895,13 +1912,13 @@ test_menu() {
     tree_full
     env_set "IHWIP_TEST_STDIN_TTY=1"
     tree_sum "$ROOT" >"$T/before.sum"
-    input 1 4
+    input 1 6
     run_rescue_in "$T/in.txt"
     assert_rc 2
     out_has "1) Show the plan (changes nothing)"
     out_has "# mode: plan"
     out_has "NETWORK${TAB}manual${TAB}Dante Primary${TAB}ip=192.168.10.21 mask=255.255.255.0 router=- selected=no"
-    out_count 2 "Choose 1-4:"
+    out_count 2 "Choose 1-6:"
     err_has "cancelled: nothing has been changed"
     tree_sum "$ROOT" >"$T/after.sum"
     same_file "$T/before.sum" "$T/after.sum"
@@ -1931,7 +1948,7 @@ test_menu() {
     tree_full
     env_set "IHWIP_TEST_STDIN_TTY=1"
     tree_sum "$ROOT" >"$T/before.sum"
-    input 4
+    input 6
     run_rescue_in "$T/in.txt"
     assert_rc 2
     err_has "cancelled: nothing has been changed"
@@ -1983,7 +2000,7 @@ test_menu() {
     input 2 1 d UNINSTALL
     run_rescue_in "$T/in.txt"
     assert_rc 2
-    out_lacks "Choose 1-4"
+    out_lacks "Choose 1-6"
     out_has "# mode: plan"
     err_has "no action given"
     run_rescue_in "$T/in.txt" --uninstall
@@ -2126,6 +2143,453 @@ test_no_real_tools() {
     end
 }
 
+# ---------------------------------------------------------------- network repair
+
+# tool_line <tool> <args...>: how the ipconfig/dscacheutil/killall fakes log that argv.
+tool_line() {
+    printf '%q ' "$@"
+}
+
+# tool_calls_are <line>...: every ipconfig/dscacheutil/killall call, exactly and in order.
+tool_calls_are() {
+    local a want="" got=""
+    for a in "$@"; do want="$want$a$NL"; done
+    if [ -f "$T/calls.log" ]; then
+        got=$(grep -E '^(ipconfig|dscacheutil|killall) ' "$T/calls.log")
+        if [ -n "$got" ]; then got="$got$NL"; fi
+    fi
+    if [ "$got" != "$want" ]; then
+        bad "repair tool calls differ$NL        want: $(printf '%s' "$want" | tr '\n' ';')$NL        got:  $(printf '%s' "$got" | tr '\n' ';')"
+    fi
+}
+
+# fx_values <dns|search> <service> <value>...: starting DNS servers or search domains.
+fx_values() {
+    local dir="$1" svc="$2"
+    shift 2
+    mkdir -p "$FX/$dir"
+    printf '%s\n' "$@" >"$FX/$dir/$(fx_name "$svc").txt"
+}
+
+no_backup_dir() {
+    local p
+    for p in "$ROOT/Users/Shared"/ItHurtsWhenIP-backups*; do
+        if [ -e "$p" ] || [ -L "$p" ]; then bad "a backup folder was created: $(rel "$p")"; fi
+    done
+}
+
+# tree_soft: default fixtures plus a VPN, a tunnel without a device, an adapter
+# that is not attached, and a renamed show NIC whose port name differs from
+# its service name (only -listnetworkserviceorder knows its device).
+tree_soft() {
+    tree_empty
+    fx_copy
+    fx_service "Show VPN" "IPv6: Automatic" "IPv6 IP address: none" "IPv6 Router: none"
+    fx_service "Tunnel" "DHCP Configuration" "Client ID: "
+    fx_service "USB Dongle" "DHCP Configuration" "IP address: 10.1.1.1" "Subnet mask: 255.255.255.0" "Router: 10.1.1.254"
+    fx_service "Dante Secondary" "DHCP Configuration" "IP address: 192.168.20.5" "Subnet mask: 255.255.255.0" "Router: "
+    printf '%s\n' "" "Hardware Port: USB 10/100/1000 LAN 2" "Device: en9" "Ethernet Address: 00:11:22:33:44:99" >>"$FX/hardwareports.txt"
+    printf '%s\n' "An asterisk (*) denotes that a network service is disabled." \
+        "(1) USB 10/100/1000 LAN" "(Hardware Port: USB 10/100/1000 LAN, Device: en7)" "" \
+        "(2) Dante Primary" "(Hardware Port: Dante Primary, Device: en8)" "" \
+        "(3) Wi-Fi" "(Hardware Port: Wi-Fi, Device: en0)" "" \
+        "(4) Thunderbolt Bridge" "(Hardware Port: Thunderbolt Bridge, Device: bridge0)" "" \
+        "(*) Old Adapter" "(Hardware Port: Old Adapter, Device: en5)" "" \
+        "(5) Show VPN" "(Hardware Port: com.example.vpn, Device: )" "" \
+        "(6) Tunnel" "(Hardware Port: com.example.tunnel, Device: )" "" \
+        "(7) USB Dongle" "(Hardware Port: USB 10/100/1000 LAN, Device: en20)" "" \
+        "(8) Dante Secondary" "(Hardware Port: USB 10/100/1000 LAN 2, Device: en9)" "" >"$FX/serviceorder.txt"
+}
+
+# tree_service: default fixtures, Dante Primary with DNS servers and a search domain.
+tree_service() {
+    tree_empty
+    fx_copy
+    fx_values dns "Dante Primary" 10.0.0.1 10.0.0.2
+    fx_values search "Dante Primary" show.example
+}
+
+test_repair_soft() {
+    local bk
+    begin "40  --repair soft --yes: flush + HUP, one ipconfig per enabled DHCP service with an attached device"
+    tree_soft
+    bk="$ROOT/$BK_REL"
+    run_rescue --repair soft --yes
+    assert_rc 0
+    err_empty
+    tool_calls_are "$(tool_line dscacheutil -flushcache)" "$(tool_line killall -HUP mDNSResponder)" \
+        "$(tool_line ipconfig set en7 DHCP)" "$(tool_line ipconfig set en0 DHCP)" \
+        "$(tool_line ipconfig set bridge0 DHCP)" "$(tool_line ipconfig set en9 DHCP)"
+    writes_are
+    no_mutating_calls_except_ns
+    out_has "# repair: soft"
+    out_has "REPAIR${TAB}tier${TAB}soft${TAB}-"
+    out_has "REPAIR${TAB}renew${TAB}Dante Secondary${TAB}device=en9 now=dhcp/192.168.20.5/255.255.255.0/-"
+    out_has "REPAIR${TAB}leave${TAB}Dante Primary${TAB}manual (static) settings: not touched"
+    out_has "REPAIR${TAB}leave${TAB}Old Adapter${TAB}disabled: not touched"
+    out_has "REPAIR${TAB}leave${TAB}Show VPN${TAB}neither DHCP nor Manual settings (for example a VPN): not touched"
+    out_has "REPAIR${TAB}leave${TAB}Tunnel${TAB}no network device (for example a VPN): not renewed"
+    out_has "REPAIR${TAB}leave${TAB}USB Dongle${TAB}device en20 is not attached: not renewed"
+    out_has "# summary: backup=1 repair=6 leave=5"
+    out_has "OK${TAB}REPAIR${TAB}flushcache${TAB}dns-cache${TAB}dscacheutil -flushcache"
+    out_has "OK${TAB}REPAIR${TAB}hup${TAB}mDNSResponder${TAB}killall -HUP mDNSResponder"
+    out_has "OK${TAB}REPAIR${TAB}renew${TAB}USB 10/100/1000 LAN${TAB}device=en7 now=dhcp/192.168.1.42/255.255.255.0/192.168.1.1"
+    out_has "VERIFY${TAB}ok${TAB}repair:USB 10/100/1000 LAN${TAB}now=dhcp/192.168.1.42/255.255.255.0/192.168.1.1"
+    out_has "VERIFY${TAB}ok${TAB}repair:Wi-Fi${TAB}now=dhcp/10.20.30.40/255.255.252.0/10.20.28.1"
+    out_has "VERIFY${TAB}ok${TAB}repair:Dante Secondary${TAB}now=dhcp/192.168.20.5/255.255.255.0/-"
+    out_has "VERIFY${TAB}warn${TAB}repair:Thunderbolt Bridge${TAB}now=dhcp/169.254.12.34/255.255.0.0/-; link-local only (169.254.x.x): no DHCP server answered yet; check the cable, the switch or the DHCP server"
+    out_count 5 "VERIFY${TAB}" # 4 checks, the warning repeated under "# warnings"
+    out_lacks "repair:Dante Primary"
+    out_lacks "FAILED"
+    out_has "# failed steps: 0"
+    out_has "# warnings: 1"
+    in_order "OK${TAB}BACKUP${TAB}snapshot${TAB}network" "OK${TAB}REPAIR${TAB}flushcache" "OK${TAB}REPAIR${TAB}hup" \
+        "OK${TAB}REPAIR${TAB}renew${TAB}USB 10/100/1000 LAN" "VERIFY${TAB}ok${TAB}repair:USB" "# result" "# warnings: 1"
+    out_has "# backup folder: /$BK_REL"
+    present "$bk/plan.txt" "$bk/network-before.txt" "$bk/rescue.log"
+    absent "$bk/service-before.txt"
+    file_has "$bk/plan.txt" "REPAIR${TAB}renew${TAB}Wi-Fi${TAB}device=en0"
+    file_has "$bk/rescue.log" "# warnings: 1"
+    file_has "$bk/network-before.txt" '$ networksetup -getinfo "Dante Secondary"'
+    end
+
+    begin "40b --repair soft on the real Mac Studio fixtures: unplugged adapters and the VPN are left alone"
+    tree_empty
+    env_set "IHWIP_FAKE_FIXTURES=$FIXTURES_ROOT/mac-studio"
+    run_rescue --plan --repair soft
+    assert_rc 0
+    err_empty
+    out_count 3 "REPAIR${TAB}renew${TAB}"
+    out_has "REPAIR${TAB}renew${TAB}Ethernet${TAB}device=en0 now=dhcp/-/-/-"
+    out_has "REPAIR${TAB}renew${TAB}Wi-Fi${TAB}device=en1 now=dhcp/192.0.2.54/255.255.255.0/192.0.2.1"
+    out_has "REPAIR${TAB}renew${TAB}Thunderbolt Bridge${TAB}device=bridge0 now=dhcp/-/-/-"
+    out_has "REPAIR${TAB}leave${TAB}LAN USB Port${TAB}device en10 is not attached: not renewed"
+    out_has "REPAIR${TAB}leave${TAB}USB Audio Device (R)${TAB}device en11 is not attached: not renewed"
+    out_has "REPAIR${TAB}leave${TAB}VPN Service${TAB}neither DHCP nor Manual settings (for example a VPN): not touched"
+    no_mutating_calls
+    no_backup_dir
+    run_rescue --repair soft --yes
+    assert_rc 0
+    tool_calls_are "$(tool_line dscacheutil -flushcache)" "$(tool_line killall -HUP mDNSResponder)" \
+        "$(tool_line ipconfig set en0 DHCP)" "$(tool_line ipconfig set en1 DHCP)" "$(tool_line ipconfig set bridge0 DHCP)"
+    out_has "VERIFY${TAB}warn${TAB}repair:Ethernet${TAB}now=dhcp/-/-/-; no address yet: check the cable, the switch or the DHCP server"
+    out_has "VERIFY${TAB}ok${TAB}repair:Wi-Fi"
+    out_has "# warnings: 2"
+    writes_are
+    end
+}
+
+test_repair_service() {
+    local bk
+    begin "41  --repair service:\"Dante Primary\" --yes: exact argv in order, DNS/search backed up, link-local is a warning"
+    tree_service
+    bk="$ROOT/$BK_REL"
+    run_rescue --repair "service:Dante Primary" --yes
+    assert_rc 0
+    err_empty
+    writes_are "$(argv_line -setdhcp "Dante Primary")" \
+        "$(argv_line -setdnsservers "Dante Primary" Empty)" \
+        "$(argv_line -setsearchdomains "Dante Primary" Empty)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" off)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" on)"
+    tool_calls_are
+    no_mutating_calls_except_ns
+    out_has "# repair: service:Dante Primary"
+    out_has "REPAIR${TAB}tier${TAB}service${TAB}Dante Primary"
+    out_has "BACKUP${TAB}snapshot${TAB}Dante Primary${TAB}service-before.txt"
+    out_has "REPAIR${TAB}current${TAB}Dante Primary${TAB}now=manual/192.168.10.21/255.255.255.0/- dns=10.0.0.1,10.0.0.2 search=show.example"
+    out_has "REPAIR${TAB}cleardns${TAB}Dante Primary${TAB}was=10.0.0.1,10.0.0.2"
+    out_has "# summary: backup=2 repair=5 leave=0"
+    in_order "OK${TAB}BACKUP${TAB}snapshot${TAB}network" "OK${TAB}BACKUP${TAB}snapshot${TAB}Dante Primary${TAB}service-before.txt" \
+        "OK${TAB}REPAIR${TAB}setdhcp${TAB}Dante Primary${TAB}was=manual/192.168.10.21/255.255.255.0/-" \
+        "OK${TAB}REPAIR${TAB}cleardns${TAB}Dante Primary${TAB}was=10.0.0.1,10.0.0.2" \
+        "OK${TAB}REPAIR${TAB}clearsearch${TAB}Dante Primary${TAB}was=show.example" \
+        "OK${TAB}REPAIR${TAB}disable${TAB}Dante Primary${TAB}-" \
+        "OK${TAB}REPAIR${TAB}enable${TAB}Dante Primary${TAB}-" \
+        "VERIFY${TAB}warn${TAB}repair:Dante Primary"
+    out_has "VERIFY${TAB}warn${TAB}repair:Dante Primary${TAB}now=dhcp/169.254.99.99/255.255.0.0/- dns=- search=- enabled=yes; link-local only (169.254.x.x): no DHCP server answered yet; check the cable, the switch or the DHCP server"
+    out_has "# failed steps: 0"
+    out_has "# warnings: 1"
+    file_has "$bk/service-before.txt" "# service: Dante Primary"
+    file_has "$bk/service-before.txt" '$ networksetup -getdnsservers "Dante Primary"'
+    file_has "$bk/service-before.txt" "10.0.0.2"
+    file_has "$bk/service-before.txt" '$ networksetup -getsearchdomains "Dante Primary"'
+    file_has "$bk/service-before.txt" "show.example"
+    file_has "$bk/service-before.txt" "IP address: 192.168.10.21"
+    present "$bk/plan.txt" "$bk/network-before.txt" "$bk/rescue.log"
+    file_has "$bk/rescue.log" "VERIFY${TAB}warn${TAB}repair:Dante Primary"
+    file_has "$T/ns-state/services.txt" "Dante Primary"
+    file_lacks "$T/ns-state/services.txt" "*Dante Primary"
+    end
+
+    begin "41b --repair=service:<name with / and spaces>: DHCP with an address verifies ok"
+    tree_empty
+    run_rescue "--repair=service:USB 10/100/1000 LAN" --yes
+    assert_rc 0
+    err_empty
+    writes_are "$(argv_line -setdhcp "USB 10/100/1000 LAN")" \
+        "$(argv_line -setdnsservers "USB 10/100/1000 LAN" Empty)" \
+        "$(argv_line -setsearchdomains "USB 10/100/1000 LAN" Empty)" \
+        "$(argv_line -setnetworkserviceenabled "USB 10/100/1000 LAN" off)" \
+        "$(argv_line -setnetworkserviceenabled "USB 10/100/1000 LAN" on)"
+    out_has "REPAIR${TAB}current${TAB}USB 10/100/1000 LAN${TAB}now=dhcp/192.168.1.42/255.255.255.0/192.168.1.1 dns=- search=-"
+    out_has "VERIFY${TAB}ok${TAB}repair:USB 10/100/1000 LAN${TAB}now=dhcp/192.168.1.42/255.255.255.0/192.168.1.1 dns=- search=- enabled=yes"
+    out_has "# warnings: 0"
+    out_lacks "FAILED"
+    end
+}
+
+test_repair_refusals() {
+    begin "42  --repair service: unknown, disabled, wrong case or VPN service: exit 2, no writes, no backup"
+    tree_soft
+    tree_sum "$ROOT" >"$T/before.sum"
+    refused "--repair service:Nope: there is no network service named exactly \"Nope\"" --repair service:Nope --yes
+    err_has "Nothing has been changed."
+    refused "--repair service:Nope: there is no network service named exactly \"Nope\"" --plan --repair service:Nope
+    refused "--repair service:Old Adapter: that service is disabled" --repair "service:Old Adapter" --yes
+    refused "named exactly \"dante primary\"" --repair "service:dante primary" --yes
+    refused "named exactly \"*Old Adapter\"" --repair "service:*Old Adapter" --yes
+    refused "--repair service:Show VPN: it has neither DHCP nor Manual settings" --repair "service:Show VPN" --yes
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    ns_no_writes
+    no_mutating_calls
+    no_backup_dir
+    end
+
+    begin "43  --repair argument rules: own action, full not yet, bad values, confirmation: exit 2"
+    tree_service
+    tree_sum "$ROOT" >"$T/before.sum"
+    refused "--repair cannot be combined with --uninstall" --repair soft --uninstall --yes
+    refused "--repair cannot be combined with --uninstall" --uninstall --yes --repair soft
+    refused "--repair cannot be combined with --network" --repair soft --network leave --yes
+    refused "--repair cannot be combined with --network" --plan --repair soft --network "dhcp:Dante Primary"
+    refused "--repair cannot be combined with --wait-pid" --plan --repair soft --wait-pid 123
+    refused "--repair full (full network reset) is not part of this version" --repair full --yes
+    refused "--repair full (full network reset) is not part of this version" --plan --repair=full
+    refused "unknown --repair value: bogus" --repair bogus
+    refused "--repair service: needs a service name" --repair service:
+    refused "missing value for --repair" --repair
+    refused "missing value for --repair" --repair= --yes
+    refused "missing value for --repair" --repair --yes
+    refused "choose one --repair" --repair soft --repair "service:Dante Primary" --yes
+    refused "service names must not contain tabs or line breaks" --repair "service:A${TAB}B"
+    refused "--repair needs confirmation: run it in Terminal, or pass --yes" --repair soft
+    refused "--repair needs confirmation" --repair "service:Dante Primary"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    ns_no_writes
+    no_mutating_calls
+    no_backup_dir
+    end
+}
+
+test_repair_plan() {
+    begin "44  --plan --repair soft|service: goldens with the current values, nothing changed"
+    tree_service
+    tree_sum "$ROOT" >"$T/before.sum"
+    run_rescue --plan --repair soft
+    assert_rc 0
+    err_empty
+    golden plan-repair-soft
+    out_has "# mode: plan"
+    out_has "# plan only: nothing has been changed"
+    run_rescue --plan --repair "service:Dante Primary"
+    assert_rc 0
+    err_empty
+    golden plan-repair-service
+    out_has "REPAIR${TAB}current${TAB}Dante Primary${TAB}now=manual/192.168.10.21/255.255.255.0/- dns=10.0.0.1,10.0.0.2 search=show.example"
+    out_has "REPAIR${TAB}setdhcp${TAB}Dante Primary${TAB}was=manual/192.168.10.21/255.255.255.0/-"
+    out_has "REPAIR${TAB}clearsearch${TAB}Dante Primary${TAB}was=show.example"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    ns_read_only
+    no_mutating_calls
+    tool_calls_are
+    no_backup_dir
+    file_has "$T/ns-state/dns/$(fx_name "Dante Primary").txt" "10.0.0.1"
+    end
+}
+
+test_repair_failures() {
+    begin "45  a networksetup step fails: the rest still runs (on included), FAILED + VERIFY FAILED, exit 1"
+    tree_service
+    env_set "IHWIP_FAKE_FAIL=setdnsservers"
+    run_rescue --repair "service:Dante Primary" --yes
+    assert_rc 1
+    writes_are "$(argv_line -setdhcp "Dante Primary")" \
+        "$(argv_line -setdnsservers "Dante Primary" Empty)" \
+        "$(argv_line -setsearchdomains "Dante Primary" Empty)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" off)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" on)"
+    out_has "FAILED${TAB}REPAIR${TAB}cleardns${TAB}Dante Primary${TAB}was=10.0.0.1,10.0.0.2${TAB}networksetup exit 1: ** Error: The parameters were not valid."
+    out_has "OK${TAB}REPAIR${TAB}enable${TAB}Dante Primary${TAB}-"
+    out_has "VERIFY${TAB}FAILED${TAB}repair:Dante Primary${TAB}now=dhcp/169.254.99.99/255.255.0.0/- dns=10.0.0.1,10.0.0.2 search=- enabled=yes, expected dhcp dns=- search=- enabled=yes"
+    out_has "# failed steps: 1; failed checks: 1"
+    end
+
+    begin "45b turning the service on fails twice: FAILED with the Terminal command to fix it, exit 1"
+    tree_service
+    env_set "IHWIP_FAKE_FAIL=setnetworkserviceenabled"
+    run_rescue --repair "service:Dante Primary" --yes
+    assert_rc 1
+    writes_are "$(argv_line -setdhcp "Dante Primary")" \
+        "$(argv_line -setdnsservers "Dante Primary" Empty)" \
+        "$(argv_line -setsearchdomains "Dante Primary" Empty)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" off)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" on)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" on)"
+    out_has "FAILED${TAB}REPAIR${TAB}disable${TAB}Dante Primary${TAB}-${TAB}networksetup exit 1"
+    out_has "FAILED${TAB}REPAIR${TAB}enable${TAB}Dante Primary${TAB}-${TAB}networksetup exit 1: ** Error: The parameters were not valid. (tried twice). The service may be turned off: in Terminal run  sudo networksetup -setnetworkserviceenabled Dante\\ Primary on"
+    out_has "# failed steps: 2"
+    end
+
+    begin "46  ipconfig fails for one device: the other services are still renewed, exit 1"
+    tree_soft
+    env_set "IHWIP_FAKE_IPCONFIG_FAIL=en0"
+    run_rescue --repair soft --yes
+    assert_rc 1
+    tool_calls_are "$(tool_line dscacheutil -flushcache)" "$(tool_line killall -HUP mDNSResponder)" \
+        "$(tool_line ipconfig set en7 DHCP)" "$(tool_line ipconfig set en0 DHCP)" \
+        "$(tool_line ipconfig set bridge0 DHCP)" "$(tool_line ipconfig set en9 DHCP)"
+    out_has "FAILED${TAB}REPAIR${TAB}renew${TAB}Wi-Fi${TAB}device=en0 now=dhcp/10.20.30.40/255.255.252.0/10.20.28.1${TAB}ipconfig exit 1: ipconfig: set if en0 failed, (os/kern) failure"
+    out_lacks "repair:Wi-Fi"
+    out_has "VERIFY${TAB}ok${TAB}repair:Dante Secondary"
+    out_has "# failed steps: 1; failed checks: 0"
+    writes_are
+    end
+}
+
+test_repair_menu() {
+    begin "47  menu: soft refresh and service reset take the same path as the flags (REPAIR prompt)"
+    tree_service
+    env_set "IHWIP_TEST_STDIN_TTY=1"
+    input 4 REPAIR
+    run_rescue_in "$T/in.txt"
+    assert_rc 0
+    out_has "4) Repair network: soft refresh (flush DNS, renew DHCP leases; changes no settings)"
+    out_has "# repair: soft"
+    out_has "Type REPAIR to continue:"
+    tool_calls_are "$(tool_line dscacheutil -flushcache)" "$(tool_line killall -HUP mDNSResponder)" \
+        "$(tool_line ipconfig set en7 DHCP)" "$(tool_line ipconfig set en0 DHCP)" "$(tool_line ipconfig set bridge0 DHCP)"
+    file_has "$ROOT/$BK_REL/rescue.log" "# confirmed by typing REPAIR"
+    writes_are
+    end
+
+    begin "47b menu: reset one service picked from the numbered list"
+    tree_service
+    env_set "IHWIP_TEST_STDIN_TTY=1"
+    input 5 9 x 2 REPAIR
+    run_rescue_in "$T/in.txt"
+    assert_rc 0
+    out_has "  1) USB 10/100/1000 LAN   dhcp/192.168.1.42/255.255.255.0/192.168.1.1"
+    out_has "  2) Dante Primary   manual/192.168.10.21/255.255.255.0/-"
+    out_has "  4) Thunderbolt Bridge   dhcp/169.254.12.34/255.255.0.0/-"
+    out_lacks ") Old Adapter"
+    out_has "Not a choice: 9"
+    out_has "Not a choice: x"
+    out_has "# repair: service:Dante Primary"
+    out_has "REPAIR${TAB}current${TAB}Dante Primary${TAB}now=manual/192.168.10.21/255.255.255.0/- dns=10.0.0.1,10.0.0.2 search=show.example"
+    writes_are "$(argv_line -setdhcp "Dante Primary")" \
+        "$(argv_line -setdnsservers "Dante Primary" Empty)" \
+        "$(argv_line -setsearchdomains "Dante Primary" Empty)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" off)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" on)"
+    present "$ROOT/$BK_REL/service-before.txt"
+    end
+
+    begin "47c menu: quitting the service list or a wrong word changes nothing (exit 2)"
+    tree_service
+    env_set "IHWIP_TEST_STDIN_TTY=1"
+    tree_sum "$ROOT" >"$T/before.sum"
+    input 5 q
+    run_rescue_in "$T/in.txt"
+    assert_rc 2
+    err_has "cancelled: nothing has been changed"
+    input 4 repair
+    run_rescue_in "$T/in.txt"
+    assert_rc 2
+    out_has "Type REPAIR to continue:"
+    err_has "cancelled: nothing has been changed"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    no_mutating_calls
+    no_backup_dir
+    end
+}
+
+test_repair_guards() {
+    begin "48  repair guards: new tool overrides required in test mode, ignored as root; no root -> no --repair"
+    run_probe 0 repair
+    assert_rc 0
+    out_has "TEST_MODE=0"
+    out_has "IPCONFIG=/usr/sbin/ipconfig DSCACHEUTIL=/usr/bin/dscacheutil KILLALL=/usr/bin/killall RWAIT=10"
+    err_has "running as root: ignoring IHWIP_* test overrides"
+    run_probe 501 repair
+    assert_rc 0
+    out_has "TEST_MODE=1"
+    out_has "IPCONFIG=$FAKES/ipconfig DSCACHEUTIL=$FAKES/dscacheutil KILLALL=$FAKES/killall RWAIT=1"
+    env_unset IHWIP_ROOT
+    run_probe 501 repair
+    assert_rc 2
+    err_has "--repair needs administrator rights. Run:  sudo bash ithurtswhenip-rescue.command --repair soft"
+    if [ -s "$T/out.txt" ]; then bad "probe printed after a refusal"; fi
+    run_probe 501 plan
+    assert_rc 0
+    out_has "IPCONFIG=/usr/sbin/ipconfig DSCACHEUTIL=/usr/bin/dscacheutil KILLALL=/usr/bin/killall RWAIT=10"
+    reset_env
+    tree_empty
+    env_unset IHWIP_IPCONFIG
+    refusal "test mode needs IHWIP_IPCONFIG set to a fake tool" --plan
+    env_unset IHWIP_DSCACHEUTIL
+    refusal "test mode needs IHWIP_DSCACHEUTIL set to a fake tool" --plan
+    env_set "IHWIP_KILLALL=/usr/bin/killall"
+    refusal "IHWIP_KILLALL points into a system tools folder" --plan
+    env_set "IHWIP_REPAIR_WAIT=0"
+    refusal "IHWIP_REPAIR_WAIT must be 1 to 60" --plan
+    env_set "IHWIP_REPAIR_WAIT=61"
+    refusal "IHWIP_REPAIR_WAIT must be 1 to 60" --plan
+    env_set "IHWIP_REPAIR_WAIT=5s"
+    refusal "IHWIP_REPAIR_WAIT must be 1 to 60" --plan
+    env_set "IHWIP_REPAIR_WAIT=60"
+    run_probe 501 repair
+    assert_rc 0
+    out_has "RWAIT=60"
+    reset_env
+    no_mutating_calls
+    no_backup_dir
+    end
+}
+
+test_repair_confirm() {
+    begin "49  Type REPAIR prompt (piped, test mode): a wrong answer cancels, REPAIR proceeds"
+    tree_service
+    env_set "IHWIP_TEST_STDIN_TTY=1"
+    tree_sum "$ROOT" >"$T/before.sum"
+    input UNINSTALL
+    run_rescue_in "$T/in.txt" --repair "service:Dante Primary"
+    assert_rc 2
+    out_has "Type REPAIR to continue:"
+    err_has "cancelled: nothing has been changed"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    ns_no_writes
+    no_mutating_calls
+    input REPAIR
+    run_rescue_in "$T/in.txt" --repair "service:Dante Primary" --log "$T/repair.log"
+    assert_rc 0
+    writes_are "$(argv_line -setdhcp "Dante Primary")" \
+        "$(argv_line -setdnsservers "Dante Primary" Empty)" \
+        "$(argv_line -setsearchdomains "Dante Primary" Empty)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" off)" \
+        "$(argv_line -setnetworkserviceenabled "Dante Primary" on)"
+    file_has "$T/repair.log" "# confirmed by typing REPAIR"
+    file_has "$T/repair.log" "# warnings: 1"
+    absent "$ROOT/$BK_REL/rescue.log"
+    present "$ROOT/$BK_REL/service-before.txt"
+    end
+}
+
 # ---------------------------------------------------------------- run
 
 echo "rescue script tests (temp folder: $SUITE)"
@@ -2162,6 +2626,14 @@ test_wait_pid_timeout
 test_wait_pid_gone
 test_menu
 test_confirm_prompt
+test_repair_soft
+test_repair_service
+test_repair_refusals
+test_repair_plan
+test_repair_failures
+test_repair_menu
+test_repair_guards
+test_repair_confirm
 test_journal_parser
 test_stage_b_finished
 test_syntax_and_lint

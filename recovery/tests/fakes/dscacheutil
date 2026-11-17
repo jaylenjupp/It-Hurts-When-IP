@@ -1,0 +1,25 @@
+#!/bin/bash
+# Fake dscacheutil for recovery/tests. Never flushes a real cache.
+#
+# Calls: every argv is appended to $IHWIP_FAKE_CALLS (if set).
+# Supports: dscacheutil -flushcache (prints nothing, exits 0).
+
+set -u
+
+root="${IHWIP_ROOT:-}"
+case "$root" in
+    "" | /)
+        echo "fake dscacheutil: IHWIP_ROOT must point at a fake root" >&2
+        exit 98
+        ;;
+esac
+
+if [ -n "${IHWIP_FAKE_CALLS:-}" ]; then
+    { printf '%q ' dscacheutil "$@"; echo; } >>"$IHWIP_FAKE_CALLS"
+fi
+
+if [ $# -ne 1 ] || [ "$1" != "-flushcache" ]; then
+    echo "fake dscacheutil: only 'dscacheutil -flushcache' is supported" >&2
+    exit 64
+fi
+exit 0

@@ -1,0 +1,16 @@
+# It Hurts When IP rescue script, version 1
+# mode: plan
+# repair: soft
+# test root: <ROOT>
+# backup folder: /Users/Shared/ItHurtsWhenIP-backups/20261115T120000Z
+# plan only: nothing has been changed
+REPAIR	tier	soft	-
+BACKUP	snapshot	network	network-before.txt
+REPAIR	flushcache	dns-cache	dscacheutil -flushcache
+REPAIR	hup	mDNSResponder	killall -HUP mDNSResponder
+REPAIR	renew	USB 10/100/1000 LAN	device=en7 now=dhcp/192.168.1.42/255.255.255.0/192.168.1.1
+REPAIR	leave	Dante Primary	manual (static) settings: not touched
+REPAIR	renew	Wi-Fi	device=en0 now=dhcp/10.20.30.40/255.255.252.0/10.20.28.1
+REPAIR	renew	Thunderbolt Bridge	device=bridge0 now=dhcp/169.254.12.34/255.255.0.0/-
+REPAIR	leave	Old Adapter	disabled: not touched
+# summary: backup=1 repair=5 leave=2

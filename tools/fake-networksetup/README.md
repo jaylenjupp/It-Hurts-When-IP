@@ -37,6 +37,8 @@ IHWIP_FAKE_RESET=1 ./tools/fake-networksetup/fake-networksetup -version   # wipe
 - Bad addresses for `-setmanual` and `IHWIP_FAKE_FAIL` print `** Error: The parameters were not valid.` on stdout and exit 1 (TODO(verify) the real exit code).
 
 ## Fixtures
+Optional fixture files: `serviceorder.txt` (printed as-is by `-listnetworkserviceorder`; without it each service gets the device of the hardware port with the same name, or an empty device), and `dns/<Service>.txt` / `search/<Service>.txt` (starting DNS servers / search domains, one per line, same file names as `info/`).
+
 `fixtures/default/` has five services: a DHCP USB LAN, a static "Dante Primary" with no router, Wi-Fi, a link-local Thunderbolt Bridge, and a disabled `*Old Adapter`. Info files are named by service with non `[A-Za-z0-9-]` runs replaced by `_`.
 
 **TODO(verify):** capture real output from Jay's Macs (read-only commands are fine on the Mac Studio: `networksetup -listallnetworkservices`, `-getinfo "<service>"`, `-listallhardwareports`) and add it as `fixtures/mac-studio/` and `fixtures/travel-macbook/`, so parsers are tested against what macOS really prints, including error text and exit codes.

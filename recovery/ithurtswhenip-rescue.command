@@ -10,6 +10,8 @@
 #     sudo bash ithurtswhenip-rescue.command --plan        # shows every step, changes nothing
 #     sudo bash ithurtswhenip-rescue.command --uninstall   # removes everything (asks first)
 #     sudo bash ithurtswhenip-rescue.command --uninstall --network dhcp:"Wi-Fi"
+#     sudo bash ithurtswhenip-rescue.command --repair soft # flush DNS, renew DHCP leases
+#     sudo bash ithurtswhenip-rescue.command --repair service:"Wi-Fi"
 #
 # Every removal is planned, backed up to /Users/Shared/ItHurtsWhenIP-backups/<UTC time>/,
 # executed, then verified. Unknown files that merely look related are reported,
@@ -20,11 +22,19 @@
 # the app bundle and per-user data now, and removes those in the background
 # once that process has exited.
 #
+# --repair is its own action: "soft" flushes the DNS cache and renews the DHCP
+# lease of every enabled DHCP service that has an attached network device;
+# "service:<name>" backs up one service's settings, switches it to DHCP, clears
+# its DNS servers and search domains and turns it off and on again. Both are
+# planned, confirmed (type REPAIR), backed up and verified like --uninstall.
+#
 # Test mode (never as root): IHWIP_ROOT=<fake tree> plus IHWIP_NETWORKSETUP,
-# IHWIP_LAUNCHCTL, IHWIP_PKGUTIL, IHWIP_PGREP and IHWIP_PKILL pointing at fakes,
-# optional IHWIP_NOW=YYYYMMDDTHHMMSSZ, IHWIP_TEST_STDIN_TTY=1 (treat piped stdin
-# as a terminal, to drive the menu and the UNINSTALL prompt) and
-# IHWIP_WAIT_TIMEOUT=<1-600> (seconds stage B waits). See recovery/tests/run-tests.sh.
+# IHWIP_LAUNCHCTL, IHWIP_PKGUTIL, IHWIP_PGREP, IHWIP_PKILL, IHWIP_IPCONFIG,
+# IHWIP_DSCACHEUTIL and IHWIP_KILLALL pointing at fakes, optional
+# IHWIP_NOW=YYYYMMDDTHHMMSSZ, IHWIP_TEST_STDIN_TTY=1 (treat piped stdin as a
+# terminal, to drive the menu and the UNINSTALL/REPAIR prompts),
+# IHWIP_WAIT_TIMEOUT=<1-600> (seconds stage B waits) and IHWIP_REPAIR_WAIT=<1-60>
+# (seconds a repair waits for addresses). See recovery/tests/run-tests.sh.
 # As root, or without IHWIP_ROOT, every IHWIP_* variable is ignored.
 #
 # Exit codes: 0 ok, 1 partial (some steps failed, listed at the end), 2 refused.
@@ -49,16 +59,20 @@ BACKUP_NAME="ItHurtsWhenIP-backups"
 QUIT_POLLS=20 # x 0.5 s = 10 s
 NET_VERIFY_POLLS=3 # -getinfo reads, 1 s apart
 WAIT_TIMEOUT_DEFAULT=300
+REPAIR_WAIT_DEFAULT=10 # seconds a repair's verify waits for DHCP addresses (1 s polls)
 
 REAL_NETWORKSETUP="/usr/sbin/networksetup"
 REAL_LAUNCHCTL="/bin/launchctl"
 REAL_PKGUTIL="/usr/sbin/pkgutil"
 REAL_PGREP="/usr/bin/pgrep"
 REAL_PKILL="/usr/bin/pkill"
+REAL_IPCONFIG="/usr/sbin/ipconfig"
+REAL_DSCACHEUTIL="/usr/bin/dscacheutil"
+REAL_KILLALL="/usr/bin/killall"
 PS_TOOL="/bin/ps" # read-only process lookups for --wait-pid
 
-OVERRIDE_VARS="IHWIP_ROOT IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL IHWIP_NOW IHWIP_TEST_STDIN_TTY IHWIP_WAIT_TIMEOUT"
-TOOL_VARS="IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL"
+OVERRIDE_VARS="IHWIP_ROOT IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL IHWIP_IPCONFIG IHWIP_DSCACHEUTIL IHWIP_KILLALL IHWIP_NOW IHWIP_TEST_STDIN_TTY IHWIP_WAIT_TIMEOUT IHWIP_REPAIR_WAIT"
+TOOL_VARS="IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL IHWIP_IPCONFIG IHWIP_DSCACHEUTIL IHWIP_KILLALL"
 
 # System inventory, in plan order: path | back up first (y/n) | kind (file|dir|socket|app).
 SYSTEM_ITEMS="
@@ -136,6 +150,7 @@ one_line() {
 print_usage() {
     cat <<EOF
 Usage: sudo bash $SCRIPT_NAME [--plan | --uninstall] [options]
+       sudo bash $SCRIPT_NAME [--plan] --repair soft|service:"<service>" [--yes] [--log <path>]
        sudo bash $SCRIPT_NAME            (numbered menu, in Terminal)
        bash $SCRIPT_NAME --help
 EOF
@@ -156,9 +171,11 @@ Actions:
                         options given. Changes nothing.
   --uninstall           Back up, then remove everything listed by --plan.
                         Needs sudo. Asks you to type UNINSTALL unless --yes.
+  --repair ...          Repair network settings (see below). Needs sudo. Asks
+                        you to type REPAIR unless --yes.
   (no action)           In Terminal: a numbered menu (show the plan, uninstall
-                        with a network choice, quit). Otherwise: print the plan
-                        and exit 2.
+                        with a network choice, repair the network, quit).
+                        Otherwise: print the plan and exit 2.
 
 Network options (may be repeated; the default is leave):
   --network leave       Leave network settings exactly as they are. Cannot be
@@ -176,18 +193,32 @@ Network options (may be repeated; the default is leave):
                         also named with dhcp: gets DHCP. Services that already
                         match their recorded settings are not touched.
 
+Network repair (its own action: it cannot be combined with --uninstall,
+--network or --wait-pid; add --plan to only see what it would do):
+  --repair soft         Flush the DNS cache and ask every enabled service that
+                        is on DHCP for a fresh lease (ipconfig set <device>
+                        DHCP). Services on Manual (static) settings, disabled
+                        services and services without an attached network
+                        device are not touched. No settings are changed.
+  --repair service:"<service>"
+                        Reset one enabled service: switch it to DHCP, clear its
+                        DNS servers and search domains, then turn it off and on
+                        again. The plan shows the current values first, and
+                        they are backed up before anything changes.
+  --repair full         A full network reset is not part of this version.
+
 Other options:
   --yes                 Do not ask for confirmation (the app passes this after
                         asking you itself).
   --log <path>          Also append all output to <path>; its folder must exist.
-                        Default for --uninstall: rescue.log in the backup folder.
+                        Default for --uninstall and --repair: rescue.log in the
+                        backup folder.
   --wait-pid <pid>      With --uninstall (used by the app): stage A does
                         everything except the app bundle and per-user data now;
                         stage B removes those in the background once process
                         <pid> has exited (it waits up to $WAIT_TIMEOUT_DEFAULT s) and appends
                         its result to the log. This script never signals that
                         process. With --plan it only shows the two stages.
-  --repair ...          Network repair arrives in a later version.
   --help                Show this help.
   --version             Print the script version.
 
@@ -195,13 +226,15 @@ Exit codes:
   0  everything worked
   1  some steps failed (each one is listed at the end)
   2  refused: bad arguments, not run with sudo, cancelled or quit, a --network
-     choice that does not fit this Mac, or no action given outside Terminal
+     or --repair choice that does not fit this Mac, or no action given outside
+     Terminal
 
 Example (changes nothing):
   sudo bash $SCRIPT_NAME --plan
 
 --plan only reads: it never changes files, background services, receipts or
-network settings.
+network settings. A repair whose only problem is that a service has no DHCP
+address yet still exits 0; the result lists it under warnings.
 Backups go to $BACKUP_PARENT/$BACKUP_NAME/<UTC time>/ and are kept.
 EOF
 }
@@ -245,8 +278,47 @@ check_network_value() {
     esac
 }
 
+# check_repair_value <value>: the one place that knows the --repair tiers.
+# Sets REPAIR_TIER (soft|service) and REPAIR_SVC.
+check_repair_value() {
+    local svc
+    case "$1" in
+        soft) REPAIR_TIER=soft ;;
+        service:*)
+            svc="${1#service:}"
+            if [ -z "$svc" ]; then
+                usage_error "--repair service: needs a service name, e.g. --repair service:\"Wi-Fi\""
+            fi
+            case "$svc" in
+                *"$TAB"* | *"$NL"*) usage_error "service names must not contain tabs or line breaks" ;;
+            esac
+            REPAIR_TIER=service
+            REPAIR_SVC="$svc"
+            ;;
+        full)
+            # Phase 3.2 fills this in (typed confirm word: RESET).
+            refuse "--repair full (full network reset) is not part of this version of the script. Nothing has been changed."
+            ;;
+        *) usage_error "unknown --repair value: $1 (use soft or service:<service>)" ;;
+    esac
+}
+
+set_repair() {
+    if [ -n "$REPAIR_TIER" ]; then
+        usage_error "choose one --repair"
+    fi
+    case "$1" in
+        "" | --*) usage_error "missing value for --repair" ;;
+    esac
+    REPAIR_ARG="$1"
+    check_repair_value "$1"
+}
+
 parse_args() {
     ACTION=""
+    REPAIR_TIER=""
+    REPAIR_SVC=""
+    REPAIR_ARG=""
     YES=0
     LOG_ARG=""
     LOG_GIVEN=0
@@ -284,7 +356,12 @@ parse_args() {
                 WAIT_PID="$2"
                 shift
                 ;;
-            --repair | --repair=*) refuse "network repair arrives in a later version of this script" ;;
+            --repair)
+                need_value "$@"
+                set_repair "$2"
+                shift
+                ;;
+            --repair=*) set_repair "${1#--repair=}" ;;
             -h | --help) SHOW_HELP=1 ;;
             --version) SHOW_VERSION=1 ;;
             *) usage_error "unknown option: $1" ;;
@@ -374,9 +451,13 @@ apply_guards() {
     PKGUTIL="$REAL_PKGUTIL"
     PGREP="$REAL_PGREP"
     PKILL="$REAL_PKILL"
+    IPCONFIG="$REAL_IPCONFIG"
+    DSCACHEUTIL="$REAL_DSCACHEUTIL"
+    KILLALL="$REAL_KILLALL"
     R=""
     TEST_MODE=0
     WAIT_TIMEOUT="$WAIT_TIMEOUT_DEFAULT"
+    REPAIR_WAIT="$REPAIR_WAIT_DEFAULT"
 
     if [ "$euid" = "0" ] || [ -z "${IHWIP_ROOT+x}" ]; then
         for v in $OVERRIDE_VARS; do
@@ -444,6 +525,12 @@ apply_guards() {
             *) refuse "IHWIP_WAIT_TIMEOUT must be 1 to 600 (seconds), got: $IHWIP_WAIT_TIMEOUT" ;;
         esac
     fi
+    if [ -n "${IHWIP_REPAIR_WAIT+x}" ]; then
+        case "$IHWIP_REPAIR_WAIT" in
+            [1-9] | [1-5][0-9] | 60) REPAIR_WAIT="$IHWIP_REPAIR_WAIT" ;;
+            *) refuse "IHWIP_REPAIR_WAIT must be 1 to 60 (seconds), got: $IHWIP_REPAIR_WAIT" ;;
+        esac
+    fi
     R="$res"
     TEST_MODE=1
     NS="$IHWIP_NETWORKSETUP"
@@ -451,13 +538,21 @@ apply_guards() {
     PKGUTIL="$IHWIP_PKGUTIL"
     PGREP="$IHWIP_PGREP"
     PKILL="$IHWIP_PKILL"
+    IPCONFIG="$IHWIP_IPCONFIG"
+    DSCACHEUTIL="$IHWIP_DSCACHEUTIL"
+    KILLALL="$IHWIP_KILLALL"
     return 0
 }
 
-# mode_allowed <action> <euid>: --uninstall needs root, or test mode.
+# mode_allowed <action> <euid>: --uninstall and --repair need root, or test mode.
 mode_allowed() {
     if [ "$1" = "uninstall" ] && [ "$2" != "0" ] && [ "$TEST_MODE" -ne 1 ]; then
         refuse "--uninstall needs administrator rights. Run:  sudo bash $SCRIPT_NAME --uninstall"
+    fi
+    if [ "$1" = "repair" ] && [ "$2" != "0" ] && [ "$TEST_MODE" -ne 1 ]; then
+        local hint="soft"
+        if [ -n "${REPAIR_ARG:-}" ]; then hint=$(printf '%q' "$REPAIR_ARG"); fi
+        refuse "--repair needs administrator rights. Run:  sudo bash $SCRIPT_NAME --repair $hint"
     fi
     return 0
 }
@@ -1509,6 +1604,221 @@ resolve_network() {
     fi
 }
 
+# ---------------------------------------------------------------- repair choices
+
+# value_list <networksetup -getdnsservers|-getsearchdomains text>: the values,
+# one per line in the input, joined with "," for plan records ("-" for none).
+value_list() {
+    local line v out=""
+    while IFS= read -r line; do
+        v=$(trim "$(one_line "$line")")
+        [ -n "$v" ] || continue
+        case "$v" in
+            "There aren't any "*) continue ;;
+        esac
+        if [ -n "$out" ]; then out="$out,"; fi
+        out="$out$v"
+    done <<<"$1"
+    printf '%s' "${out:--}"
+}
+
+# is_bsd_device <name>: a plain device name like en7 or bridge0 (it goes to
+# ipconfig as one argv element; anything else is treated as "no device").
+is_bsd_device() {
+    case "$1" in
+        "" | *[!A-Za-z0-9]*) return 1 ;;
+    esac
+    [ ${#1} -le 15 ]
+}
+
+# read_devices: read-only. SO_NAMES[]/SO_DEVS[] from -listnetworkserviceorder
+# (each service's own device, also for renamed services: "(n) Name" or
+# "(*) Name", then "(Hardware Port: X, Device: enN)"; an empty device, e.g. a
+# VPN, stays empty). HW_DEVS: the "Device:" names from -listallhardwareports,
+# one per line between newlines. TODO(verify) on the travel Mac: that
+# -listallhardwareports lists only attached hardware (on the Mac Studio the
+# unplugged USB adapters' devices are missing from it). If it is wrong, a
+# service is skipped with a note, never renewed blindly. DEV_ERR on failure.
+read_devices() {
+    local out rc line name="" dev have=0
+    SO_NAMES=()
+    SO_DEVS=()
+    HW_DEVS="$NL"
+    DEV_ERR=""
+    out=$("$NS" -listnetworkserviceorder 2>&1 </dev/null)
+    rc=$?
+    if [ "$rc" -ne 0 ] || ns_error_text "$out"; then
+        DEV_ERR="could not read the service order (exit $rc): $(one_line "$out")"
+        return 1
+    fi
+    while IFS= read -r line; do
+        case "$line" in
+            "(Hardware Port: "*)
+                [ "$have" -eq 1 ] || continue
+                dev=""
+                case "$line" in
+                    *", Device: "*")")
+                        dev="${line##*, Device: }"
+                        dev=$(trim "${dev%)}")
+                        ;;
+                esac
+                SO_NAMES[${#SO_NAMES[@]}]="$name"
+                SO_DEVS[${#SO_DEVS[@]}]="$dev"
+                have=0
+                ;;
+            "("*") "*)
+                name="${line#*) }"
+                name="${name#\*}"
+                have=1
+                ;;
+        esac
+    done <<<"$out"
+    out=$("$NS" -listallhardwareports 2>&1 </dev/null)
+    rc=$?
+    if [ "$rc" -ne 0 ] || ns_error_text "$out"; then
+        DEV_ERR="could not list the network hardware (exit $rc): $(one_line "$out")"
+        return 1
+    fi
+    while IFS= read -r line; do
+        case "$line" in
+            "Device: "*)
+                dev=$(trim "${line#Device: }")
+                if [ -n "$dev" ]; then HW_DEVS="$HW_DEVS$dev$NL"; fi
+                ;;
+        esac
+    done <<<"$out"
+    return 0
+}
+
+# device_of <service>: prints its device from SO_* (empty when unknown).
+device_of() {
+    local i=0
+    while [ "$i" -lt ${#SO_NAMES[@]} ]; do
+        if [ "${SO_NAMES[i]}" = "$1" ]; then
+            printf '%s' "${SO_DEVS[i]}"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+}
+
+# add_repair <kind> <subject> <detail> [device]
+add_repair() {
+    local n=${#RA_KIND[@]}
+    RA_KIND[n]="$1"
+    RA_SVC[n]="$2"
+    RA_DETAIL[n]="$3"
+    RA_DEV[n]="${4:-}"
+}
+
+# resolve_soft: flush + HUP, then one renew per enabled DHCP service with an
+# attached device; every other service gets a "leave" record with the reason.
+resolve_soft() {
+    local i svc dev renewed="$NL" why
+    add_repair flushcache dns-cache "dscacheutil -flushcache"
+    add_repair hup mDNSResponder "killall -HUP mDNSResponder"
+    read_devices
+    i=0
+    while [ "$i" -lt ${#NET_SVC[@]} ]; do
+        svc="${NET_SVC[i]}"
+        why=""
+        if [ "${NET_EN[i]}" -ne 1 ]; then
+            why="disabled: not touched"
+        elif [ "${NET_RC[i]}" -ne 0 ] || ns_error_text "${NET_INFO[i]}"; then
+            why="settings could not be read: not touched"
+        else
+            info_view "${NET_INFO[i]}"
+            case "$IV_MODE" in
+                manual) why="manual (static) settings: not touched" ;;
+                unknown) why="neither DHCP nor Manual settings (for example a VPN): not touched" ;;
+            esac
+        fi
+        if [ -z "$why" ]; then
+            if [ -n "$DEV_ERR" ]; then
+                why="$DEV_ERR: not renewed"
+            else
+                dev=$(device_of "$svc")
+                if ! is_bsd_device "$dev"; then
+                    why="no network device (for example a VPN): not renewed"
+                else
+                    case "$HW_DEVS" in
+                        *"$NL$dev$NL"*)
+                            case "$renewed" in
+                                *"$NL$dev$NL"*) why="device $dev is already renewed for another service" ;;
+                            esac
+                            ;;
+                        *) why="device $dev is not attached: not renewed" ;;
+                    esac
+                fi
+            fi
+        fi
+        if [ -n "$why" ]; then
+            add_repair leave "$svc" "$why"
+        else
+            add_repair renew "$svc" "device=$dev now=$(view_text)" "$dev"
+            renewed="$renewed$dev$NL"
+        fi
+        i=$((i + 1))
+    done
+}
+
+# resolve_service: refuses (exit 2, nothing changed) unless REPAIR_SVC is an
+# enabled listed service on DHCP or Manual settings whose DNS servers and
+# search domains can be read (they are backed up and shown first).
+resolve_service() {
+    local svc="$REPAIR_SVC" rc
+    if ! svc_index "$svc"; then
+        refuse "--repair service:$svc: there is no network service named exactly \"$svc\" (see -listallnetworkservices). Nothing has been changed."
+    fi
+    if [ "${NET_EN[SVC_IDX]}" -ne 1 ]; then
+        refuse "--repair service:$svc: that service is disabled; only enabled services can be reset. Nothing has been changed."
+    fi
+    if [ "${NET_RC[SVC_IDX]}" -ne 0 ] || ns_error_text "${NET_INFO[SVC_IDX]}"; then
+        refuse "--repair service:$svc: its settings could not be read: $(one_line "${NET_INFO[SVC_IDX]}"). Nothing has been changed."
+    fi
+    info_view "${NET_INFO[SVC_IDX]}"
+    if [ "$IV_MODE" = "unknown" ]; then
+        refuse "--repair service:$svc: it has neither DHCP nor Manual settings (for example a VPN), so it cannot be reset here. Nothing has been changed."
+    fi
+    SR_NOW=$(view_text)
+    SR_DNS_TEXT=$("$NS" -getdnsservers "$svc" 2>&1 </dev/null)
+    rc=$?
+    if [ "$rc" -ne 0 ] || ns_error_text "$SR_DNS_TEXT"; then
+        refuse "--repair service:$svc: its DNS servers could not be read (exit $rc: $(one_line "$SR_DNS_TEXT")), so they cannot be backed up. Nothing has been changed."
+    fi
+    SR_SEARCH_TEXT=$("$NS" -getsearchdomains "$svc" 2>&1 </dev/null)
+    rc=$?
+    if [ "$rc" -ne 0 ] || ns_error_text "$SR_SEARCH_TEXT"; then
+        refuse "--repair service:$svc: its search domains could not be read (exit $rc: $(one_line "$SR_SEARCH_TEXT")), so they cannot be backed up. Nothing has been changed."
+    fi
+    SR_DNS=$(value_list "$SR_DNS_TEXT")
+    SR_SEARCH=$(value_list "$SR_SEARCH_TEXT")
+    add_repair current "$svc" "now=$SR_NOW dns=$SR_DNS search=$SR_SEARCH"
+    add_repair setdhcp "$svc" "was=$SR_NOW"
+    add_repair cleardns "$svc" "was=$SR_DNS"
+    add_repair clearsearch "$svc" "was=$SR_SEARCH"
+    add_repair disable "$svc" -
+    add_repair enable "$svc" -
+}
+
+# resolve_repair: the one path for the flags and the menu. Reads REPAIR_TIER
+# and REPAIR_SVC; refuses (exit 2) before anything is changed.
+resolve_repair() {
+    RA_KIND=()
+    RA_SVC=()
+    RA_DETAIL=()
+    RA_DEV=()
+    HAS_WORK=1
+    if [ -n "$NET_ERR" ]; then
+        refuse "cannot plan the repair: $NET_ERR. Nothing has been changed."
+    fi
+    case "$REPAIR_TIER" in
+        soft) resolve_soft ;;
+        service) resolve_service ;;
+        *) refuse "no repair chosen" ;;
+    esac
+}
+
 # ---------------------------------------------------------------- state
 
 is_inventory_or_inside() {
@@ -1675,6 +1985,34 @@ rec() {
 # Execution lines: OK <TYPE> <KIND> <SUBJECT> <DETAIL>; FAILED <TYPE> <KIND>
 # <SUBJECT> <DETAIL> <reason>; VERIFY ok|FAILED <subject> (network:<service>
 # lines add a 4th field: now=<m>/<ip>/<mask>/<router>[ note]).
+#
+# Repair plans (--repair, printed by render_repair_plan) use the same header
+# plus "# repair: soft|service:<name>", the same 4 fields, and these records:
+#   REPAIR   tier         soft|service   -|<service>
+#   NOTE     info         backup-folder  <why the usual backup folder is not used>
+#   BACKUP   snapshot     network        network-before.txt
+#   BACKUP   snapshot     <service>      service-before.txt   (service: its getinfo, DNS, search)
+#   soft:
+#   REPAIR   flushcache   dns-cache      dscacheutil -flushcache
+#   REPAIR   hup          mDNSResponder  killall -HUP mDNSResponder
+#   REPAIR   renew        <service>      device=<bsd device> now=<m>/<ip>/<mask>/<router>
+#                                        (a planned "ipconfig set <device> DHCP")
+#   REPAIR   leave        <service>      <reason>: not touched | not renewed  (no write; not a failure)
+#   service:
+#   REPAIR   current      <service>      now=<m>/<ip>/<mask>/<router> dns=<a,b|-> search=<a,b|->
+#   REPAIR   setdhcp      <service>      was=<m>/<ip>/<mask>/<router>
+#   REPAIR   cleardns     <service>      was=<a,b|->
+#   REPAIR   clearsearch  <service>      was=<a,b|->
+#   REPAIR   disable      <service>      -
+#   REPAIR   enable       <service>      -
+#   "# summary: backup=<n> repair=<n> leave=<n>" (repair = planned writes)
+# Repair execution lines: OK|FAILED REPAIR <kind> <subject> <detail>[ <reason>]
+# as above, then one line per renewed or reset service:
+#   VERIFY   ok|warn|FAILED   repair:<service>   now=<m>/<ip>/<mask>/<router>[ dns=<list> search=<list> enabled=yes|no][; <note>]
+#   warn = the settings are right but there is no DHCP address yet (none, or
+#   link-local 169.254.x.x): reported, not a failure (exit 0 if nothing failed).
+# The result ends with "# failed steps: <n>[; failed checks: <n>]" and
+# "# warnings: <n>", each followed by the lines it counts.
 render_plan() {
     local i j k n p d label id sel cb=0 cn=0 cs=0 cq=0 cr=0 cf=0 cl=0 cx=0
     printf '# It Hurts When IP rescue script, version %s\n' "$RESCUE_VERSION"
@@ -1817,6 +2155,50 @@ render_plan() {
         "$cb" "$cn" "$cs" "$cq" "$cr" "$cf" "$cx" "$cl"
 }
 
+# render_repair_plan <plan|repair>: pure; the repair plan (records above).
+render_repair_plan() {
+    local k cb=0 cr=0 cl=0 subj
+    printf '# It Hurts When IP rescue script, version %s\n' "$RESCUE_VERSION"
+    printf '# mode: %s\n' "$1"
+    if [ "$REPAIR_TIER" = "service" ]; then
+        printf '# repair: service:%s\n' "$REPAIR_SVC"
+    else
+        printf '# repair: %s\n' "$REPAIR_TIER"
+    fi
+    if [ "$TEST_MODE" -eq 1 ]; then
+        printf '# test root: %s\n' "$R"
+    fi
+    printf '# backup folder: %s\n' "$BACKUP_DIR_DISPLAY"
+    if [ "$1" = "plan" ]; then
+        printf '# plan only: nothing has been changed\n'
+    else
+        printf '# nothing has been changed yet\n'
+    fi
+    subj=-
+    if [ "$REPAIR_TIER" = "service" ]; then subj="$REPAIR_SVC"; fi
+    rec REPAIR tier "$REPAIR_TIER" "$subj"
+    if [ -n "$BACKUP_NOTE" ]; then
+        rec NOTE info backup-folder "$BACKUP_NOTE"
+    fi
+    rec BACKUP snapshot network network-before.txt
+    cb=$((cb + 1))
+    if [ "$REPAIR_TIER" = "service" ]; then
+        rec BACKUP snapshot "$REPAIR_SVC" service-before.txt
+        cb=$((cb + 1))
+    fi
+    k=0
+    while [ "$k" -lt ${#RA_KIND[@]} ]; do
+        rec REPAIR "${RA_KIND[k]}" "${RA_SVC[k]}" "${RA_DETAIL[k]}"
+        case "${RA_KIND[k]}" in
+            leave) cl=$((cl + 1)) ;;
+            current) ;;
+            *) cr=$((cr + 1)) ;;
+        esac
+        k=$((k + 1))
+    done
+    printf '# summary: backup=%s repair=%s leave=%s\n' "$cb" "$cr" "$cl"
+}
+
 # ---------------------------------------------------------------- execution
 
 FAIL_COUNT=0
@@ -1856,15 +2238,16 @@ verify_fail() {
     FAIL_LIST="$FAIL_LIST$line$NL"
 }
 
+# confirm <word>: the user must type <word> exactly (UNINSTALL, REPAIR).
 confirm() {
-    local answer=""
-    printf 'Type UNINSTALL to continue: '
+    local word="$1" answer=""
+    printf 'Type %s to continue: ' "$word"
     IFS= read -r answer || answer=""
-    if [ "$answer" != "UNINSTALL" ]; then
+    if [ "$answer" != "$word" ]; then
         printf '\n'
         refuse "cancelled: nothing has been changed"
     fi
-    log_line "# confirmed by typing UNINSTALL"
+    log_line "# confirmed by typing $word"
 }
 
 # create_backup_dir: plain mkdir only (never -p) under /Users/Shared, with the
@@ -2394,7 +2777,7 @@ run_uninstall() {
     PLAN_TEXT=$(render_plan uninstall)
     say "$PLAN_TEXT"
     if [ "$YES" -ne 1 ]; then
-        confirm
+        confirm UNINSTALL
     fi
     if [ "$HAS_WORK" -eq 1 ]; then
         if ! create_backup_dir; then
@@ -2426,6 +2809,316 @@ run_uninstall() {
     if [ -n "$BACKUP_DIR" ]; then
         chmod -R a+rX "$BACKUP_DIR" 2>/dev/null
     fi
+    if failed_any; then
+        exit 1
+    fi
+    exit 0
+}
+
+# ---------------------------------------------------------------- repair execution
+
+WARN_COUNT=0
+WARN_LIST=""
+
+# verify_warn <subject> <detail>: the settings are right but something still
+# needs the user's attention (no DHCP address yet). Not a failure.
+verify_warn() {
+    local line="VERIFY${TAB}warn${TAB}$1${TAB}$2"
+    say "$line"
+    WARN_COUNT=$((WARN_COUNT + 1))
+    WARN_LIST="$WARN_LIST$line$NL"
+}
+
+# sys_run <tool> <args...>: the ONLY place a repair changes anything. argv
+# only, never through a shell. Sets SYS_OUT and SYS_RC; returns 1 on a non-zero
+# exit or networksetup error text.
+sys_run() {
+    local tool="$1"
+    shift
+    SYS_OUT=$("$tool" "$@" 2>&1 </dev/null)
+    SYS_RC=$?
+    if [ "$SYS_RC" -ne 0 ]; then
+        return 1
+    fi
+    if [ "$tool" = "$NS" ] && ns_error_text "$SYS_OUT"; then
+        return 1
+    fi
+    return 0
+}
+
+# tool_name <tool path>: the system tool's own name, also for a test fake.
+tool_name() {
+    case "$1" in
+        "$NS") printf 'networksetup' ;;
+        "$IPCONFIG") printf 'ipconfig' ;;
+        "$DSCACHEUTIL") printf 'dscacheutil' ;;
+        "$KILLALL") printf 'killall' ;;
+        *) printf '%s' "${1##*/}" ;;
+    esac
+}
+
+# sys_write <TYPE> <KIND> <SUBJECT> <DETAIL> <tool> <args...>: one write plus
+# its OK or FAILED line.
+sys_write() {
+    local t="$1" k="$2" sj="$3" d="$4" tool="$5"
+    shift 5
+    if sys_run "$tool" "$@"; then
+        step_ok "$t" "$k" "$sj" "$d"
+        return 0
+    fi
+    step_fail "$t" "$k" "$sj" "$d" "$(tool_name "$tool") exit $SYS_RC: $(one_line "${SYS_OUT:-no output}")"
+    return 1
+}
+
+# service_state <name> <-listallnetworkservices text>: enabled|disabled|missing.
+service_state() {
+    local line
+    while IFS= read -r line; do
+        if [ "$line" = "$1" ]; then
+            printf 'enabled'
+            return 0
+        fi
+        if [ "$line" = "*$1" ]; then
+            printf 'disabled'
+            return 0
+        fi
+    done <<<"$2"
+    printf 'missing'
+}
+
+# repair_check <service> <0: soft | 1: service reset>: one read-back. Sets
+# RCK_STATE ok|warn|bad and RCK_TEXT (the detail for the VERIFY line).
+repair_check() {
+    local svc="$1" out rc dns search en list ok=1 addr=1
+    out=$("$NS" -getinfo "$svc" 2>&1 </dev/null)
+    rc=$?
+    if [ "$rc" -ne 0 ] || ns_error_text "$out"; then
+        RCK_STATE=bad
+        RCK_TEXT="now=unreadable ($(one_line "$out")), expected dhcp"
+        return 0
+    fi
+    info_view "$out"
+    RCK_TEXT="now=$(view_text)"
+    if [ "$IV_MODE" != "dhcp" ]; then ok=0; fi
+    if ! is_ipv4 "$IV_IP"; then
+        addr=0
+    else
+        case "$IV_IP" in
+            169.254.*) addr=0 ;;
+        esac
+    fi
+    if [ "$2" -eq 1 ]; then
+        out=$("$NS" -getdnsservers "$svc" 2>&1 </dev/null)
+        rc=$?
+        if [ "$rc" -ne 0 ] || ns_error_text "$out"; then dns="unreadable"; else dns=$(value_list "$out"); fi
+        out=$("$NS" -getsearchdomains "$svc" 2>&1 </dev/null)
+        rc=$?
+        if [ "$rc" -ne 0 ] || ns_error_text "$out"; then search="unreadable"; else search=$(value_list "$out"); fi
+        list=$("$NS" -listallnetworkservices 2>&1 </dev/null)
+        case "$(service_state "$svc" "$list")" in
+            enabled) en=yes ;;
+            *) en=no ;;
+        esac
+        RCK_TEXT="$RCK_TEXT dns=$dns search=$search enabled=$en"
+        if [ "$dns" != "-" ] || [ "$search" != "-" ] || [ "$en" != "yes" ]; then ok=0; fi
+    fi
+    if [ "$ok" -eq 0 ]; then
+        RCK_STATE=bad
+        if [ "$2" -eq 1 ]; then
+            RCK_TEXT="$RCK_TEXT, expected dhcp dns=- search=- enabled=yes"
+        else
+            RCK_TEXT="$RCK_TEXT, expected dhcp"
+        fi
+    elif [ "$addr" -eq 1 ]; then
+        RCK_STATE=ok
+    else
+        RCK_STATE=warn
+        case "$IV_IP" in
+            169.254.*) RCK_TEXT="$RCK_TEXT; link-local only (169.254.x.x): no DHCP server answered yet; check the cable, the switch or the DHCP server" ;;
+            *) RCK_TEXT="$RCK_TEXT; no address yet: check the cable, the switch or the DHCP server" ;;
+        esac
+    fi
+}
+
+# repair_verify <0|1> <service>...: reads every service back once a second
+# until all are ok or REPAIR_WAIT seconds have passed, then one VERIFY line each.
+repair_verify() {
+    local full="$1" t=0 i all
+    local -a svcs st tx
+    shift
+    svcs=("$@")
+    [ ${#svcs[@]} -gt 0 ] || return 0
+    while :; do
+        all=1
+        i=0
+        while [ "$i" -lt ${#svcs[@]} ]; do
+            if [ "${st[i]:-}" != "ok" ]; then
+                repair_check "${svcs[i]}" "$full"
+                st[i]="$RCK_STATE"
+                tx[i]="$RCK_TEXT"
+                if [ "$RCK_STATE" != "ok" ]; then all=0; fi
+            fi
+            i=$((i + 1))
+        done
+        [ "$all" -eq 1 ] && break
+        [ "$t" -lt "$REPAIR_WAIT" ] || break
+        sleep 1
+        t=$((t + 1))
+    done
+    i=0
+    while [ "$i" -lt ${#svcs[@]} ]; do
+        case "${st[i]}" in
+            ok) verify_ok "repair:${svcs[i]}" "${tx[i]}" ;;
+            warn) verify_warn "repair:${svcs[i]}" "${tx[i]}" ;;
+            *) verify_fail "repair:${svcs[i]}" "${tx[i]}" ;;
+        esac
+        i=$((i + 1))
+    done
+}
+
+do_soft() {
+    local k dev
+    local -a done_svcs=()
+    k=0
+    while [ "$k" -lt ${#RA_KIND[@]} ]; do
+        case "${RA_KIND[k]}" in
+            flushcache) sys_write REPAIR flushcache dns-cache "${RA_DETAIL[k]}" "$DSCACHEUTIL" -flushcache ;;
+            hup) sys_write REPAIR hup mDNSResponder "${RA_DETAIL[k]}" "$KILLALL" -HUP mDNSResponder ;;
+            renew)
+                dev="${RA_DEV[k]}"
+                if ! is_bsd_device "$dev"; then
+                    step_fail REPAIR renew "${RA_SVC[k]}" "${RA_DETAIL[k]}" "not a plain device name: nothing was changed"
+                elif sys_write REPAIR renew "${RA_SVC[k]}" "${RA_DETAIL[k]}" "$IPCONFIG" set "$dev" DHCP; then
+                    done_svcs[${#done_svcs[@]}]="${RA_SVC[k]}"
+                fi
+                ;;
+        esac
+        k=$((k + 1))
+    done
+    if [ ${#done_svcs[@]} -gt 0 ]; then
+        repair_verify 0 "${done_svcs[@]}"
+    fi
+}
+
+# do_service_snapshot: service-before.txt, read again right before the first
+# write. Returns 1 (nothing may change) when it cannot be written.
+do_service_snapshot() {
+    local f="$BACKUP_DIR/service-before.txt" svc="$REPAIR_SVC" info dns search ri rd rs
+    info=$("$NS" -getinfo "$svc" 2>&1 </dev/null)
+    ri=$?
+    dns=$("$NS" -getdnsservers "$svc" 2>&1 </dev/null)
+    rd=$?
+    search=$("$NS" -getsearchdomains "$svc" 2>&1 </dev/null)
+    rs=$?
+    if ! {
+        printf '# service-before.txt: read-only snapshot by %s version %s, %s\n' "$SCRIPT_NAME" "$RESCUE_VERSION" "$TS"
+        printf '# service: %s\n' "$svc"
+        printf '\n$ networksetup -getinfo "%s"\n%s\n(exit %s)\n' "$svc" "$info" "$ri"
+        printf '\n$ networksetup -getdnsservers "%s"\n%s\n(exit %s)\n' "$svc" "$dns" "$rd"
+        printf '\n$ networksetup -getsearchdomains "%s"\n%s\n(exit %s)\n' "$svc" "$search" "$rs"
+    } >"$f" 2>/dev/null; then
+        step_fail BACKUP snapshot "$svc" service-before.txt "could not write the snapshot"
+        return 1
+    fi
+    if [ "$ri" -ne 0 ] || [ "$rd" -ne 0 ] || [ "$rs" -ne 0 ] || ns_error_text "$info$NL$dns$NL$search"; then
+        step_fail BACKUP snapshot "$svc" service-before.txt "could not read the service's settings again"
+        return 1
+    fi
+    step_ok BACKUP snapshot "$svc" service-before.txt
+    return 0
+}
+
+# do_service: the reset steps in plan order. Each write runs even when an
+# earlier one failed, and "on" is always tried (twice) once "off" was tried,
+# so a service is never left turned off without saying how to fix it.
+do_service() {
+    local svc="$REPAIR_SVC" list k d
+    list=$("$NS" -listallnetworkservices 2>&1 </dev/null)
+    if [ "$(service_state "$svc" "$list")" != "enabled" ]; then
+        step_fail REPAIR setdhcp "$svc" "was=$SR_NOW" "the service is no longer listed or no longer enabled: nothing was changed"
+        return 0
+    fi
+    k=0
+    while [ "$k" -lt ${#RA_KIND[@]} ]; do
+        d="${RA_DETAIL[k]}"
+        case "${RA_KIND[k]}" in
+            setdhcp) sys_write REPAIR setdhcp "$svc" "$d" "$NS" -setdhcp "$svc" ;;
+            cleardns) sys_write REPAIR cleardns "$svc" "$d" "$NS" -setdnsservers "$svc" Empty ;;
+            clearsearch) sys_write REPAIR clearsearch "$svc" "$d" "$NS" -setsearchdomains "$svc" Empty ;;
+            disable) sys_write REPAIR disable "$svc" "$d" "$NS" -setnetworkserviceenabled "$svc" off ;;
+            enable)
+                if sys_run "$NS" -setnetworkserviceenabled "$svc" on; then
+                    step_ok REPAIR enable "$svc" "$d"
+                else
+                    sleep 1
+                    if sys_run "$NS" -setnetworkserviceenabled "$svc" on; then
+                        step_ok REPAIR enable "$svc" "$d"
+                    else
+                        step_fail REPAIR enable "$svc" "$d" "networksetup exit $SYS_RC: $(one_line "${SYS_OUT:-no output}") (tried twice). The service may be turned off: in Terminal run  sudo networksetup -setnetworkserviceenabled $(printf '%q' "$svc") on"
+                    fi
+                fi
+                ;;
+        esac
+        k=$((k + 1))
+    done
+    repair_verify 1 "$svc"
+}
+
+repair_report() {
+    local line
+    say "# result"
+    if [ -n "$BACKUP_DIR" ]; then
+        say "# backup folder: $BACKUP_DIR_DISPLAY"
+    fi
+    if [ -n "$LOG_FILE" ]; then
+        say "# log: $(shown_log)"
+    fi
+    if [ "$FAIL_COUNT" -eq 0 ] && [ "$VFAIL_COUNT" -eq 0 ]; then
+        say "# failed steps: 0"
+    else
+        say "# failed steps: $FAIL_COUNT; failed checks: $VFAIL_COUNT"
+        while IFS= read -r line; do
+            [ -n "$line" ] && say "$line"
+        done <<<"$FAIL_LIST"
+    fi
+    say "# warnings: $WARN_COUNT"
+    while IFS= read -r line; do
+        [ -n "$line" ] && say "$line"
+    done <<<"$WARN_LIST"
+}
+
+# run_repair: plan -> REPAIR -> backup folder + snapshots -> writes -> verify.
+# Never returns.
+run_repair() {
+    PLAN_TEXT=$(render_repair_plan repair)
+    say "$PLAN_TEXT"
+    if [ "$YES" -ne 1 ]; then
+        confirm REPAIR
+    fi
+    if ! create_backup_dir; then
+        step_fail BACKUP dir "$BACKUP_DIR_DISPLAY" - "$BACKUP_FAIL_REASON"
+        say "# stopped before changing anything: no backup folder"
+        exit 1
+    fi
+    if [ "$LOG_GIVEN" -ne 1 ]; then
+        open_log "$BACKUP_DIR/rescue.log"
+    fi
+    if ! printf '%s\n' "$PLAN_TEXT" >"$BACKUP_DIR/plan.txt" 2>/dev/null; then
+        step_fail BACKUP file plan.txt - "could not write plan.txt"
+    fi
+    do_snapshot
+    case "$REPAIR_TIER" in
+        soft) do_soft ;;
+        service)
+            if do_service_snapshot; then
+                do_service
+            else
+                say "# stopped before changing anything: the service's settings were not backed up"
+            fi
+            ;;
+    esac
+    repair_report
+    chmod -R a+rX "$BACKUP_DIR" 2>/dev/null
     if failed_any; then
         exit 1
     fi
@@ -2527,6 +3220,60 @@ menu_network() {
     fi
 }
 
+# menu_repair_service: a numbered list of the services a reset can take
+# (enabled, DHCP or Manual); sets REPAIR_TIER/REPAIR_SVC like the flag would.
+menu_repair_service() {
+    local i n=0
+    local -a idx
+    i=0
+    while [ "$i" -lt ${#NET_SVC[@]} ]; do
+        if [ "${NET_EN[i]}" -eq 1 ] && [ "${NET_RC[i]}" -eq 0 ] && ! ns_error_text "${NET_INFO[i]}"; then
+            info_view "${NET_INFO[i]}"
+            if [ "$IV_MODE" != "unknown" ]; then
+                idx[n]=$i
+                n=$((n + 1))
+            fi
+        fi
+        i=$((i + 1))
+    done
+    if [ "$n" -eq 0 ]; then
+        printf 'No enabled service has DHCP or Manual settings, so there is nothing to reset.\n'
+        menu_quit
+    fi
+    while :; do
+        printf '\nReset one service: it is switched to DHCP, its DNS servers and search domains\n'
+        printf 'are cleared, and it is turned off and on again. The next screen shows its\n'
+        printf 'current values, which are backed up first.\n'
+        i=0
+        while [ "$i" -lt "$n" ]; do
+            info_view "${NET_INFO[${idx[i]}]}"
+            printf '  %s) %s   %s\n' "$((i + 1))" "${NET_SVC[${idx[i]}]}" "$(view_text)"
+            i=$((i + 1))
+        done
+        printf 'Type a number, or q to quit: '
+        menu_read
+        case "$MENU_ANS" in
+            q | Q) menu_quit ;;
+            "" | *[!0-9]* | 0*) printf 'Not a choice: %s\n' "$MENU_ANS" ;;
+            *)
+                if [ ${#MENU_ANS} -le 3 ] && [ "$MENU_ANS" -ge 1 ] && [ "$MENU_ANS" -le "$n" ]; then
+                    REPAIR_TIER=service
+                    REPAIR_SVC="${NET_SVC[${idx[$((MENU_ANS - 1))]}]}"
+                    REPAIR_ARG="service:$REPAIR_SVC"
+                    return 0
+                fi
+                printf 'Not a choice: %s\n' "$MENU_ANS"
+                ;;
+        esac
+    done
+}
+
+# menu_repair: the same path as the flags: resolve -> plan -> REPAIR -> run.
+menu_repair() {
+    resolve_repair
+    run_repair
+}
+
 # menu_uninstall: the same path as the flags: choices -> plan -> UNINSTALL -> run.
 menu_uninstall() {
     check_network_choices
@@ -2541,8 +3288,10 @@ run_menu() {
             "  1) Show the plan (changes nothing)" \
             "  2) Uninstall, and choose what happens to network settings" \
             "  3) Uninstall, and leave network settings as they are" \
-            "  4) Quit (changes nothing)"
-        printf 'Choose 1-4: '
+            "  4) Repair network: soft refresh (flush DNS, renew DHCP leases; changes no settings)" \
+            "  5) Repair network: reset one service (DHCP, clear its DNS, turn it off and on)" \
+            "  6) Quit (changes nothing)"
+        printf 'Choose 1-6: '
         menu_read
         case "$MENU_ANS" in
             1)
@@ -2561,8 +3310,19 @@ run_menu() {
                 NET_CHOICES="leave$NL"
                 menu_uninstall
                 ;;
-            4 | q | Q) menu_quit ;;
-            *) printf 'Please type 1, 2, 3 or 4.\n' ;;
+            4)
+                mode_allowed repair "$EUID_NOW"
+                REPAIR_TIER=soft
+                REPAIR_ARG=soft
+                menu_repair
+                ;;
+            5)
+                mode_allowed repair "$EUID_NOW"
+                menu_repair_service
+                menu_repair
+                ;;
+            6 | q | Q) menu_quit ;;
+            *) printf 'Please type a number from 1 to 6.\n' ;;
         esac
     done
 }
@@ -2581,6 +3341,17 @@ main() {
         exit 0
     fi
     check_network_choices
+    if [ -n "$REPAIR_TIER" ]; then
+        if [ "$ACTION" = "uninstall" ]; then
+            usage_error "--repair cannot be combined with --uninstall"
+        fi
+        if [ "$NET_GIVEN" -eq 1 ]; then
+            usage_error "--repair cannot be combined with --network"
+        fi
+        if [ -n "$WAIT_PID" ]; then
+            usage_error "--repair cannot be combined with --wait-pid"
+        fi
+    fi
     if [ -n "$WAIT_PID" ] && [ "$ACTION" != "uninstall" ] && [ "$ACTION" != "plan" ]; then
         usage_error "--wait-pid needs --uninstall (or --plan to preview the two stages)"
     fi
@@ -2595,6 +3366,9 @@ main() {
     export LC_ALL
 
     mode="${ACTION:-none}"
+    if [ -n "$REPAIR_TIER" ]; then
+        if [ "$mode" = "plan" ]; then mode="repair-plan"; else mode="repair"; fi
+    fi
     if [ "$mode" = "none" ] && [ "$NET_GIVEN" -eq 0 ] && [ "$YES" -eq 0 ] && stdin_is_terminal; then
         mode="menu"
     fi
@@ -2603,8 +3377,25 @@ main() {
     if [ "$mode" = "uninstall" ] && [ "$YES" -ne 1 ] && ! stdin_is_terminal; then
         refuse "--uninstall needs confirmation: run it in Terminal, or pass --yes"
     fi
+    if [ "$mode" = "repair" ] && [ "$YES" -ne 1 ] && ! stdin_is_terminal; then
+        refuse "--repair needs confirmation: run it in Terminal, or pass --yes"
+    fi
 
     init_time
+    case "$mode" in
+        repair | repair-plan)
+            # A repair reads only network settings: no inventory, launchd,
+            # receipt or process lookups.
+            read_network
+            choose_backup_base
+            resolve_repair
+            if [ "$mode" = "repair-plan" ]; then
+                say "$(render_repair_plan plan)"
+                exit 0
+            fi
+            run_repair
+            ;;
+    esac
     build_inventory
     collect_state
 
