@@ -68,13 +68,13 @@ Every phase ends with a **draft release** (see `docs/RELEASING.md`) and a "what 
 - App shows a clear banner if the helper is missing, not running, or a different version.
 
 **Acceptance**
-- [ ] Helper tests: invalid service / IP / mask / injection strings (`'; rm -rf /'`, newline, quotes) are rejected and run no command (fake log empty)
-- [ ] Helper tests: first `set_static_ip` on a service writes its original to the journal; second change doesn't overwrite it; `restore_service` issues the right `networksetup` argv
-- [ ] `git grep -n 'sh", *"-c\|Command::new("sh")' -- src-tauri helper-tool` returns nothing
-- [ ] `git grep -n '777' -- helper-tool` returns nothing
-- [ ] v1 requests still succeed in tests; unknown version gets `unsupported_version`
-- [ ] Rescue script test: journal fixture → plan offers "restore original" for exactly the journaled services
-- [ ] Draft release; owner confirms quick sets still work on travel Mac and `--plan` shows journal entries after a change
+- [x] Helper tests: invalid service / IP / mask / injection strings (`'; rm -rf /'`, newline, quotes) are rejected and run no command (fake log empty)
+- [x] Helper tests: first `set_static_ip` on a service writes its original to the journal; second change doesn't overwrite it; `restore_service` issues the right `networksetup` argv
+- [x] `git grep -n 'sh", *"-c\|Command::new("sh")' -- src-tauri helper-tool` returns nothing
+- [x] `git grep -n '777' -- helper-tool ':!helper-tool/Cargo.lock'` returns nothing (Cargo.lock excluded: a dependency checksum contains `7777`; approved with the Phase 2 plan)
+- [x] v1 requests still succeed in tests; unknown version gets `unsupported_version`
+- [x] Rescue script test: journal fixture → plan offers "restore original" for exactly the journaled services
+- [ ] Draft release (done 2026-11-17, `dev-v1.13.1-20261117-1538-6e7e3c7`); owner confirms quick sets still work on travel Mac and `--plan` shows journal entries after a change
 
 ---
 
