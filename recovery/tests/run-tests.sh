@@ -18,7 +18,7 @@
 #  - Guards about real root or a missing IHWIP_ROOT are tested by sourcing the
 #    script and calling apply_guards / mode_allowed directly, which runs nothing.
 #    The journal parser is unit-tested the same way (sourced, parse only).
-#  - The menu and the UNINSTALL/REPAIR prompts are driven from a file on stdin with the
+#  - The menu and the UNINSTALL/REPAIR/RESET/RESTORE prompts are driven from a file on stdin with the
 #    test-mode-only IHWIP_TEST_STDIN_TTY=1.
 #  - --wait-pid tests wait on `sleep` processes this runner starts itself. Every
 #    exit path (EXIT/INT/TERM/HUP trap) stops those sleepers and waits for (or,
@@ -51,7 +51,7 @@ for arg in "$@"; do
 done
 
 for f in "$SCRIPT" "$FAKE_NS" "$FAKES/launchctl" "$FAKES/pkgutil" "$FAKES/pgrep" "$FAKES/pkill" \
-    "$FAKES/ipconfig" "$FAKES/dscacheutil" "$FAKES/killall"; do
+    "$FAKES/ipconfig" "$FAKES/dscacheutil" "$FAKES/killall" "$FAKES/shasum"; do
     if [ ! -x "$f" ]; then
         echo "missing or not executable: $f" >&2
         exit 2
@@ -240,6 +240,7 @@ reset_env() {
         "IHWIP_IPCONFIG=$FAKES/ipconfig"
         "IHWIP_DSCACHEUTIL=$FAKES/dscacheutil"
         "IHWIP_KILLALL=$FAKES/killall"
+        "IHWIP_SHASUM=$FAKES/shasum"
         "IHWIP_NOW=$NOW"
         "IHWIP_REPAIR_WAIT=1"
         "IHWIP_FAKE_STATE=$T/ns-state"
@@ -296,7 +297,7 @@ collect_output() {
 }
 
 # check_run <stdin file> <args...>: the rules every fake-root run must meet.
-# A run that can change things (--uninstall, --repair, or a menu fed from a file) must
+# A run that can change things (--uninstall, --repair, --restore-backup, or a menu fed from a file) must
 # use the fakes for every tool.
 check_run() {
     local input="$1" root a v val can_change=0
@@ -305,7 +306,7 @@ check_run() {
     root=$(env_get IHWIP_ROOT)
     for a in "$@"; do
         case "$a" in
-            --uninstall | --repair | --repair=*) can_change=1 ;;
+            --uninstall | --repair | --repair=* | --restore-backup | --restore-backup=*) can_change=1 ;;
         esac
     done
     if [ "$input" != "/dev/null" ]; then can_change=1; fi
@@ -318,7 +319,7 @@ check_run() {
             ;;
     esac
     if [ "$can_change" -eq 1 ]; then
-        for v in IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL IHWIP_IPCONFIG IHWIP_DSCACHEUTIL IHWIP_KILLALL; do
+        for v in IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL IHWIP_IPCONFIG IHWIP_DSCACHEUTIL IHWIP_KILLALL IHWIP_SHASUM; do
             val=$(env_get "$v") || abort "a run that can change things without $v"
             case "$val" in
                 "$FAKES"/* | "$FAKE_NS") ;;
@@ -1131,7 +1132,7 @@ test_refusals() {
     refusal "IHWIP_WAIT_TIMEOUT must be 1 to 600" --plan
     env_set "IHWIP_WAIT_TIMEOUT=5s"
     refusal "IHWIP_WAIT_TIMEOUT must be 1 to 600" --plan
-    refusal "--repair full (full network reset) is not part of this version" --repair full
+    refusal "--repair needs confirmation: run it in Terminal, or pass --yes" --repair full
     refusal "missing value for --log" --plan --log
     refusal "--log: folder does not exist" --plan --log "$T/no-such-dir/rescue.log"
     tree_sum "$ROOT" >"$T/after.sum"
@@ -1365,7 +1366,11 @@ test_help_version() {
     out_has "--repair soft"
     out_has "--repair service:\"<service>\""
     out_has "type REPAIR"
-    out_has "--repair full         A full network reset is not part of this version."
+    out_has "--repair full         Full network reset: copy these files from"
+    out_has "--restore-backup <backup folder>"
+    out_has "type RESET unless --yes"
+    out_has "This script never restarts the Mac."
+    out_lacks "not part of this version"
     out_lacks "arrives in a later version"
     out_lacks "not available in this build"
     run_rescue_bare --version
@@ -1912,13 +1917,14 @@ test_menu() {
     tree_full
     env_set "IHWIP_TEST_STDIN_TTY=1"
     tree_sum "$ROOT" >"$T/before.sum"
-    input 1 6
+    input 1 8
     run_rescue_in "$T/in.txt"
     assert_rc 2
     out_has "1) Show the plan (changes nothing)"
+    out_has "8) Quit (changes nothing)"
     out_has "# mode: plan"
     out_has "NETWORK${TAB}manual${TAB}Dante Primary${TAB}ip=192.168.10.21 mask=255.255.255.0 router=- selected=no"
-    out_count 2 "Choose 1-6:"
+    out_count 2 "Choose 1-8:"
     err_has "cancelled: nothing has been changed"
     tree_sum "$ROOT" >"$T/after.sum"
     same_file "$T/before.sum" "$T/after.sum"
@@ -1948,7 +1954,7 @@ test_menu() {
     tree_full
     env_set "IHWIP_TEST_STDIN_TTY=1"
     tree_sum "$ROOT" >"$T/before.sum"
-    input 6
+    input 8
     run_rescue_in "$T/in.txt"
     assert_rc 2
     err_has "cancelled: nothing has been changed"
@@ -2000,7 +2006,7 @@ test_menu() {
     input 2 1 d UNINSTALL
     run_rescue_in "$T/in.txt"
     assert_rc 2
-    out_lacks "Choose 1-6"
+    out_lacks "Choose 1-8"
     out_has "# mode: plan"
     err_has "no action given"
     run_rescue_in "$T/in.txt" --uninstall
@@ -2357,7 +2363,7 @@ test_repair_refusals() {
     no_backup_dir
     end
 
-    begin "43  --repair argument rules: own action, full not yet, bad values, confirmation: exit 2"
+    begin "43  --repair argument rules: own action, bad values, confirmation: exit 2"
     tree_service
     tree_sum "$ROOT" >"$T/before.sum"
     refused "--repair cannot be combined with --uninstall" --repair soft --uninstall --yes
@@ -2365,8 +2371,9 @@ test_repair_refusals() {
     refused "--repair cannot be combined with --network" --repair soft --network leave --yes
     refused "--repair cannot be combined with --network" --plan --repair soft --network "dhcp:Dante Primary"
     refused "--repair cannot be combined with --wait-pid" --plan --repair soft --wait-pid 123
-    refused "--repair full (full network reset) is not part of this version" --repair full --yes
-    refused "--repair full (full network reset) is not part of this version" --plan --repair=full
+    refused "--repair full: $SC_ABS does not exist" --repair full --yes
+    refused "--repair full: $SC_ABS does not exist" --plan --repair=full
+    refused "--repair needs confirmation" --repair full
     refused "unknown --repair value: bogus" --repair bogus
     refused "--repair service: needs a service name" --repair service:
     refused "missing value for --repair" --repair
@@ -2590,6 +2597,543 @@ test_repair_confirm() {
     end
 }
 
+# ---------------------------------------------------------------- full network reset / restore
+
+SC_REL="Library/Preferences/SystemConfiguration"
+SC_ABS="/$SC_REL"
+SC_NAMES="preferences.plist NetworkInterfaces.plist com.apple.network.identification.plist com.apple.airport.preferences.plist"
+SC_NAMES_RE="^\./(preferences\.plist|NetworkInterfaces\.plist|com\.apple\.network\.identification\.plist|com\.apple\.airport\.preferences\.plist)$TAB"
+RESTART_LINE="RESTART${TAB}needed${TAB}-${TAB}RESTART NEEDED: restart this Mac yourself to finish; until then the running network keeps its current settings"
+
+# sc_files: the four network configuration files (copies kept in $T/orig)
+# plus decoys that a full reset must never touch.
+sc_files() {
+    local n
+    mkdir -p "$ROOT/$SC_REL/subfolder" "$T/orig"
+    put "$SC_REL/preferences.plist" "<plist>services, static IPs, Locations, service order</plist>"
+    put "$SC_REL/NetworkInterfaces.plist" "<plist>en0 en7 en8 bridge0</plist>"
+    put "$SC_REL/com.apple.network.identification.plist" "<plist>network identification</plist>"
+    put "$SC_REL/com.apple.airport.preferences.plist" "<plist>known Wi-Fi networks</plist>"
+    for n in $SC_NAMES; do
+        chmod 644 "$ROOT/$SC_REL/$n"
+        cp -p "$ROOT/$SC_REL/$n" "$T/orig/$n"
+    done
+    put "$SC_REL/com.apple.Boot.plist" "<plist>boot, a decoy</plist>"
+    put "$SC_REL/preferences.plist.backup" "<plist>decoy</plist>"
+    put "$SC_REL/preferences.plist.old" "<plist>decoy</plist>"
+    put "$SC_REL/NetworkInterfaces-pre-upgrade-source.plist" "<plist>decoy</plist>"
+    put "$SC_REL/com.apple.airport.preferences.plist.backup" "<plist>decoy</plist>"
+    put "$SC_REL/subfolder/preferences.plist" "<plist>nested decoy</plist>"
+}
+
+tree_sc() {
+    tree_empty
+    sc_files
+}
+
+sha_of() {
+    /usr/bin/shasum -a 256 -- "$1" | cut -d' ' -f1
+}
+
+# manifest_for <dir> <name>...: the SHA256SUMS text expected for those files.
+manifest_for() {
+    local d="$1" n
+    shift
+    for n in "$@"; do
+        printf '%s  %s\n' "$(sha_of "$d/$n")" "$n"
+    done
+}
+
+last_line_is() {
+    local got
+    got=$(tail -n 1 "$T/out.txt")
+    if [ "$got" != "$1" ]; then bad "last stdout line is: $got"; fi
+}
+
+no_temp_files() {
+    local f
+    for f in "$ROOT/$SC_REL"/.ihwip-restore.*; do
+        if [ -e "$f" ] || [ -L "$f" ]; then bad "temp file left behind: $(rel "$f")"; fi
+    done
+}
+
+test_full_reset() {
+    local bk sc n
+    begin "50  --repair full --yes: exactly the 4 files move to a checked backup, decoys untouched, RESTART needed"
+    tree_sc
+    sc="$ROOT/$SC_REL"
+    bk="$ROOT/$BK_REL"
+    tree_sum "$sc" >"$T/sc-before.sum"
+    run_rescue --repair full --yes
+    assert_rc 0
+    err_empty
+    for n in $SC_NAMES; do
+        absent "$sc/$n"
+        same_file "$T/orig/$n" "$bk/system-configuration/$n"
+        if [ "$(stat -f '%Lp' "$bk/system-configuration/$n")" != "644" ]; then bad "backup copy mode changed: $n"; fi
+        out_has "OK${TAB}BACKUP${TAB}file${TAB}$SC_ABS/$n${TAB}system-configuration/$n"
+        out_has "OK${TAB}RESET${TAB}move${TAB}$SC_ABS/$n${TAB}size=$(stat -f '%z' "$T/orig/$n")"
+        out_has "VERIFY${TAB}ok${TAB}reset:$SC_ABS/$n${TAB}gone; backup copy matches SHA256SUMS"
+    done
+    tree_sum "$sc" >"$T/sc-after.sum"
+    grep -Ev "$SC_NAMES_RE" "$T/sc-before.sum" >"$T/sc-expected.sum"
+    same_file "$T/sc-expected.sum" "$T/sc-after.sum"
+    if [ "$(wc -l <"$T/sc-after.sum")" -ne 8 ]; then bad "decoys missing from SystemConfiguration"; fi
+    # shellcheck disable=SC2086 # word splitting of the fixed name list is intended
+    manifest_for "$T/orig" $SC_NAMES >"$T/expected-sums"
+    same_file "$T/expected-sums" "$bk/system-configuration/SHA256SUMS"
+    out_has "# repair: full"
+    out_has "REPAIR${TAB}tier${TAB}full${TAB}-"
+    out_has "BACKUP${TAB}manifest${TAB}SHA256SUMS${TAB}system-configuration/SHA256SUMS"
+    out_has "NOTE${TAB}info${TAB}reset${TAB}after the next restart macOS rebuilds all network services, static IP settings, Locations and the service order from scratch"
+    out_has "NOTE${TAB}info${TAB}reset${TAB}Wi-Fi networks may need to be rejoined"
+    out_has "NOTE${TAB}info${TAB}reset${TAB}the running network keeps working until you restart the Mac yourself; this script never restarts it"
+    out_has "# summary: backup=6 move=4 absent=0 skip=0"
+    out_has "OK${TAB}BACKUP${TAB}check${TAB}system-configuration/SHA256SUMS${TAB}4 file(s) match"
+    in_order "OK${TAB}BACKUP${TAB}snapshot${TAB}network" "OK${TAB}BACKUP${TAB}file${TAB}$SC_ABS/preferences.plist" \
+        "OK${TAB}BACKUP${TAB}manifest" "OK${TAB}BACKUP${TAB}check" "OK${TAB}RESET${TAB}move" "VERIFY${TAB}ok${TAB}reset:" \
+        "# result" "# failed steps: 0" "# warnings: 0" "$RESTART_LINE"
+    last_line_is "$RESTART_LINE"
+    out_count 1 "RESTART${TAB}needed"
+    out_lacks "FAILED"
+    out_lacks "will restart"
+    writes_are
+    tool_calls_are
+    no_mutating_calls
+    present "$bk/plan.txt" "$bk/network-before.txt" "$bk/rescue.log"
+    file_has "$bk/rescue.log" "RESTART${TAB}needed"
+    end
+
+    begin "50b --repair full: a symlinked NetworkInterfaces.plist is skipped, a missing file is just absent"
+    tree_sc
+    sc="$ROOT/$SC_REL"
+    bk="$ROOT/$BK_REL"
+    rm -- "${sc:?}/NetworkInterfaces.plist" "${sc:?}/com.apple.network.identification.plist"
+    mkdir -p "$ROOT/Library/Elsewhere"
+    cp -p "$T/orig/NetworkInterfaces.plist" "$ROOT/Library/Elsewhere/NetworkInterfaces.plist"
+    ln -s "$ROOT/Library/Elsewhere/NetworkInterfaces.plist" "$sc/NetworkInterfaces.plist"
+    tree_sum "$ROOT" >"$T/before.sum"
+    run_rescue --plan --repair full
+    assert_rc 0
+    err_empty
+    out_has "RESET${TAB}skip${TAB}$SC_ABS/NetworkInterfaces.plist${TAB}symlink: not moved"
+    out_has "RESET${TAB}absent${TAB}$SC_ABS/com.apple.network.identification.plist${TAB}not present: nothing to move"
+    out_has "# summary: backup=4 move=2 absent=1 skip=1"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    no_backup_dir
+    run_rescue --repair full --yes
+    assert_rc 0
+    err_empty
+    absent "$sc/preferences.plist" "$sc/com.apple.airport.preferences.plist"
+    if [ ! -L "$sc/NetworkInterfaces.plist" ]; then bad "the symlink was removed"; fi
+    same_file "$T/orig/NetworkInterfaces.plist" "$ROOT/Library/Elsewhere/NetworkInterfaces.plist"
+    absent "$bk/system-configuration/NetworkInterfaces.plist" "$bk/system-configuration/com.apple.network.identification.plist"
+    manifest_for "$T/orig" preferences.plist com.apple.airport.preferences.plist >"$T/expected-sums"
+    same_file "$T/expected-sums" "$bk/system-configuration/SHA256SUMS"
+    out_has "# warnings: 0"
+    out_lacks "FAILED"
+    last_line_is "$RESTART_LINE"
+    end
+}
+
+test_full_reset_refusals() {
+    local word
+    begin "51  --repair full refuses (exit 2, nothing moved, no backup folder): no confirmation or a wrong word"
+    tree_sc
+    tree_sum "$ROOT" >"$T/before.sum"
+    refused "--repair needs confirmation: run it in Terminal, or pass --yes" --repair full
+    env_set "IHWIP_TEST_STDIN_TTY=1"
+    for word in reset REPAIR "RESET " ""; do
+        input "$word"
+        run_rescue_in "$T/in.txt" --repair full
+        assert_rc 2
+        out_has "Type RESET to continue:"
+        err_has "cancelled: nothing has been changed"
+    done
+    : >"$T/in.txt"
+    run_rescue_in "$T/in.txt" --repair full
+    assert_rc 2
+    err_has "cancelled: nothing has been changed"
+    env_unset IHWIP_TEST_STDIN_TTY
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    no_backup_dir
+    no_mutating_calls
+    end
+
+    begin "51b --repair full: no files to move, missing or symlinked SystemConfiguration: exit 2, nothing changed"
+    tree_empty
+    mkdir -p "$ROOT/$SC_REL"
+    put "$SC_REL/com.apple.Boot.plist" "<plist>decoy</plist>"
+    tree_sum "$ROOT" >"$T/before.sum"
+    refused "--repair full: none of the network configuration files is in $SC_ABS (already reset? then restart the Mac)" --repair full --yes
+    refused "none of the network configuration files" --plan --repair full
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    sc_files
+    mv "$ROOT/$SC_REL" "$ROOT/Library/RealSystemConfiguration"
+    ln -s "$ROOT/Library/RealSystemConfiguration" "$ROOT/$SC_REL"
+    tree_sum "$ROOT" >"$T/before.sum"
+    refused "--repair full: $SC_ABS is a symlink, not a folder, or resolves outside its expected location" --repair full --yes
+    rm -- "${ROOT:?}/${SC_REL:?}"
+    refused "--repair full: $SC_ABS does not exist" --repair full --yes
+    ln -s "$ROOT/Library/RealSystemConfiguration" "$ROOT/$SC_REL"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    no_backup_dir
+    no_mutating_calls
+    end
+}
+
+test_full_reset_failures() {
+    local sc bk n
+    begin "52  --repair full: a copy that fails removes nothing (exit 1, no RESTART)"
+    tree_sc
+    sc="$ROOT/$SC_REL"
+    chmod 000 "$sc/NetworkInterfaces.plist"
+    run_rescue --repair full --yes
+    assert_rc 1
+    out_has "FAILED${TAB}BACKUP${TAB}file${TAB}$SC_ABS/NetworkInterfaces.plist${TAB}system-configuration/NetworkInterfaces.plist${TAB}copy failed:"
+    out_has "# stopped before changing anything: the backup of the network configuration files is not complete, so nothing was removed"
+    out_lacks "OK${TAB}RESET"
+    out_lacks "RESTART"
+    out_lacks "OK${TAB}BACKUP${TAB}manifest"
+    out_has "# failed steps: 1"
+    chmod 644 "$sc/NetworkInterfaces.plist"
+    for n in $SC_NAMES; do same_file "$T/orig/$n" "$sc/$n"; done
+    end
+
+    begin "52b --repair full: a backup copy whose checksum does not match removes nothing (exit 1, no RESTART)"
+    tree_sc
+    sc="$ROOT/$SC_REL"
+    bk="$ROOT/$BK_REL"
+    env_set "IHWIP_FAKE_SHASUM_BAD=ItHurtsWhenIP-backups"
+    tree_sum "$sc" >"$T/sc-before.sum"
+    run_rescue --repair full --yes
+    assert_rc 1
+    for n in $SC_NAMES; do
+        out_has "FAILED${TAB}BACKUP${TAB}file${TAB}$SC_ABS/$n${TAB}system-configuration/$n${TAB}the copy does not match the original (checksum)"
+    done
+    out_has "# stopped before changing anything"
+    out_lacks "OK${TAB}RESET"
+    out_lacks "RESTART"
+    absent "$bk/system-configuration/SHA256SUMS"
+    tree_sum "$sc" >"$T/sc-after.sum"
+    same_file "$T/sc-before.sum" "$T/sc-after.sum"
+    calls_have "shasum -a 256 -- $sc/preferences.plist"
+    end
+}
+
+test_restore_backup() {
+    local sc bk bk2 n grp want
+    begin "53  --restore-backup after a full reset: byte-for-byte back, the current state backed up first, RESTART needed"
+    tree_sc
+    sc="$ROOT/$SC_REL"
+    bk="$ROOT/$BK_REL"
+    bk2="$ROOT/$BK_REL-2"
+    run_rescue --repair full --yes
+    assert_rc 0
+    # macOS rebuilt preferences.plist after a restart:
+    put "$SC_REL/preferences.plist" "<plist>rebuilt by macOS after the restart</plist>"
+    cp -p "$sc/preferences.plist" "$T/rebuilt.plist"
+    tree_sum "$bk" >"$T/bk-before.sum"
+    run_rescue --restore-backup "/$BK_REL" --yes
+    assert_rc 0
+    err_empty
+    for n in $SC_NAMES; do
+        same_file "$T/orig/$n" "$sc/$n"
+        if [ "$(stat -f '%Lp' "$sc/$n")" != "644" ]; then bad "restored file mode is not 644: $n"; fi
+        out_has "VERIFY${TAB}ok${TAB}restore:$SC_ABS/$n${TAB}matches SHA256SUMS, mode 644"
+    done
+    out_has "# restore-backup: /$BK_REL"
+    out_has "# backup folder: /$BK_REL-2"
+    out_has "RESTORE${TAB}source${TAB}/$BK_REL${TAB}files=4"
+    out_has "RESTORE${TAB}file${TAB}$SC_ABS/preferences.plist${TAB}size=$(stat -f '%z' "$T/orig/preferences.plist") current=present"
+    out_has "RESTORE${TAB}file${TAB}$SC_ABS/NetworkInterfaces.plist${TAB}size=$(stat -f '%z' "$T/orig/NetworkInterfaces.plist") current=absent"
+    out_has "BACKUP${TAB}file${TAB}$SC_ABS/preferences.plist${TAB}system-configuration/preferences.plist"
+    out_has "# summary: backup=3 restore=4"
+    out_has "OK${TAB}BACKUP${TAB}check${TAB}system-configuration/SHA256SUMS${TAB}1 file(s) match"
+    grp=$(stat -f '%Sg' "$bk/system-configuration/preferences.plist")
+    want="wheel"
+    if [ "$grp" = "admin" ]; then want="admin"; fi
+    out_has "NOTE${TAB}info${TAB}$SC_ABS/preferences.plist${TAB}owner not changed in test mode (as root: root:$want)"
+    in_order "OK${TAB}BACKUP${TAB}snapshot" "OK${TAB}BACKUP${TAB}file${TAB}$SC_ABS/preferences.plist" "OK${TAB}BACKUP${TAB}check" \
+        "OK${TAB}RESTORE${TAB}file" "VERIFY${TAB}ok${TAB}restore:" "# failed steps: 0" "$RESTART_LINE"
+    last_line_is "$RESTART_LINE"
+    out_lacks "FAILED"
+    same_file "$T/rebuilt.plist" "$bk2/system-configuration/preferences.plist"
+    printf '%s  preferences.plist\n' "$(sha_of "$T/rebuilt.plist")" >"$T/expected-sums"
+    same_file "$T/expected-sums" "$bk2/system-configuration/SHA256SUMS"
+    absent "$bk2/system-configuration/NetworkInterfaces.plist"
+    present "$bk2/plan.txt" "$bk2/network-before.txt" "$bk2/rescue.log"
+    tree_sum "$bk" >"$T/bk-after.sum"
+    same_file "$T/bk-before.sum" "$T/bk-after.sum"
+    no_temp_files
+    writes_are
+    no_mutating_calls
+    end
+
+    begin "53b restore_group (pure): a backup copy's group is kept only when it is wheel or admin, else wheel"
+    # shellcheck disable=SC2016 # expanded by the inner bash
+    /usr/bin/env -i "${ENVV[@]}" /bin/bash -c '
+        . "$1" || exit 90
+        for g in wheel admin staff everyone "" "wheel admin" Wheel; do
+            printf "[%s]=%s\n" "$g" "$(restore_group "$g")"
+        done
+    ' probe "$SCRIPT" >"$T/out.txt" 2>"$T/err.txt" </dev/null
+    RC=$?
+    collect_output
+    assert_rc 0
+    err_empty
+    printf '%s\n' "[wheel]=wheel" "[admin]=admin" "[staff]=wheel" "[everyone]=wheel" "[]=wheel" "[wheel admin]=wheel" "[Wheel]=wheel" >"$T/want.txt"
+    same_file "$T/want.txt" "$T/out.txt"
+    end
+}
+
+# bad_copy <name>: a copy of the good backup under another folder name; prints
+# the full path of its system-configuration folder.
+bad_copy() {
+    local d="$ROOT/Users/Shared/ItHurtsWhenIP-backups/$1"
+    cp -Rp "$ROOT/$BK_REL" "$d"
+    printf '%s' "$d/system-configuration"
+}
+
+test_restore_refusals() {
+    local sc d hex base="/Users/Shared/ItHurtsWhenIP-backups"
+    begin "54  --restore-backup refuses bad backups and paths: exit 2, nothing changed, no new backup folder"
+    tree_sc
+    sc="$ROOT/$SC_REL"
+    run_rescue --repair full --yes
+    assert_rc 0
+    put "$SC_REL/preferences.plist" "<plist>rebuilt by macOS</plist>"
+    hex=$(sha_of "$sc/com.apple.Boot.plist")
+    d=$(bad_copy tampered)
+    printf 'x' >>"$d/preferences.plist"
+    d=$(bad_copy unknown-name)
+    cp -p "$sc/com.apple.Boot.plist" "$d/com.apple.Boot.plist"
+    printf '%s  %s\n' "$hex" com.apple.Boot.plist >>"$d/SHA256SUMS"
+    d=$(bad_copy dotdot-name)
+    printf '%s  %s\n' "$hex" ../x >>"$d/SHA256SUMS"
+    d=$(bad_copy one-space)
+    sed 's/  / /' "$d/SHA256SUMS" >"$d/S" && mv "$d/S" "$d/SHA256SUMS"
+    d=$(bad_copy duplicate)
+    head -n 1 "$d/SHA256SUMS" >"$T/first-line"
+    cat "$T/first-line" >>"$d/SHA256SUMS"
+    d=$(bad_copy no-manifest)
+    rm -- "${d:?}/SHA256SUMS"
+    d=$(bad_copy empty-manifest)
+    : >"$d/SHA256SUMS"
+    d=$(bad_copy missing-file)
+    rm -- "${d:?}/NetworkInterfaces.plist"
+    d=$(bad_copy symlinked-file)
+    rm -- "${d:?}/NetworkInterfaces.plist"
+    ln -s "$T/orig/NetworkInterfaces.plist" "$d/NetworkInterfaces.plist"
+    d=$(bad_copy symlinked-sub)
+    mv "$d" "${d%/*}/real-sub"
+    ln -s "${d%/*}/real-sub" "$d"
+    ln -s "$ROOT/$BK_REL" "$ROOT$base/symlinked-dir"
+    mkdir "$ROOT$base/uninstall-only"
+    put "${base#/}/uninstall-only/plan.txt" "an uninstall backup"
+    ln -s "$ROOT$base" "$ROOT$base.20261115T130000Z"
+    mkdir -p "$ROOT/Users/Shared/other"
+    cp -Rp "$ROOT/$BK_REL" "$ROOT/Users/Shared/other/$NOW"
+    tree_sum "$ROOT" >"$T/before.sum"
+    refused "--restore-backup: system-configuration/preferences.plist does not match its checksum in SHA256SUMS (changed or damaged). Nothing has been changed." --restore-backup "$base/tampered" --yes
+    refused "does not match its checksum" --plan --restore-backup "$base/tampered"
+    refused "SHA256SUMS lists a file that is not a network configuration file: com.apple.Boot.plist" --restore-backup "$base/unknown-name" --yes
+    refused "SHA256SUMS lists a file that is not a network configuration file: ../x" --restore-backup "$base/dotdot-name" --yes
+    refused "SHA256SUMS has a line that is not \"<sha256>  <file name>\"" --restore-backup "$base/one-space" --yes
+    refused "SHA256SUMS lists preferences.plist twice" --restore-backup "$base/duplicate" --yes
+    refused "system-configuration/SHA256SUMS is missing, a symlink or not a regular file" --restore-backup "$base/no-manifest" --yes
+    refused "SHA256SUMS lists no files" --restore-backup "$base/empty-manifest" --yes
+    refused "system-configuration/NetworkInterfaces.plist is missing, a symlink or not a regular file" --restore-backup "$base/missing-file" --yes
+    refused "system-configuration/NetworkInterfaces.plist is missing, a symlink or not a regular file" --restore-backup "$base/symlinked-file" --yes
+    refused "has no system-configuration folder" --restore-backup "$base/symlinked-sub" --yes
+    refused "--restore-backup: $base/symlinked-dir is missing, a symlink, not a folder or not owned by root" --restore-backup "$base/symlinked-dir" --yes
+    refused "has no system-configuration folder" --restore-backup "$base/uninstall-only" --yes
+    refused "is missing, a symlink, not a folder or not owned by root" --restore-backup "$base/no-such-folder" --yes
+    refused "--restore-backup: $base.20261115T130000Z is missing, a symlink, not a folder or not owned by root" --restore-backup "$base.20261115T130000Z/$NOW" --yes
+    refused "is not a folder directly inside /Users/Shared/ItHurtsWhenIP-backups" --restore-backup "/Users/Shared/other/$NOW" --yes
+    refused "is not a folder directly inside" --restore-backup "/tmp/$NOW" --yes
+    refused "is not a folder directly inside" --restore-backup "/$BK_REL/system-configuration" --yes
+    refused "is not a folder directly inside" --restore-backup "$base" --yes
+    refused "needs the full path of a backup folder" --restore-backup "$BK_REL" --yes
+    refused "unexpected path form" --restore-backup "/$BK_REL/../$NOW" --yes
+    refused "unexpected path form" --restore-backup "$base//$NOW" --yes
+    refused "unexpected backup folder name: .hidden" --restore-backup "$base/.hidden" --yes
+    refused "unexpected backup folder name" --restore-backup "$base/a b" --yes
+    ln -s "$T/orig/NetworkInterfaces.plist" "$sc/NetworkInterfaces.plist"
+    refused "--restore-backup: $SC_ABS/NetworkInterfaces.plist is a symlink or not a regular file; it is not replaced" --restore-backup "/$BK_REL" --yes
+    rm -- "${sc:?}/NetworkInterfaces.plist"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    absent "$ROOT/$BK_REL-2"
+    no_temp_files
+    no_mutating_calls
+    writes_are
+    end
+}
+
+test_full_restore_plans() {
+    begin "55  --plan --repair full and --plan --restore-backup: goldens, nothing changed, no backup folder"
+    tree_sc
+    tree_sum "$ROOT" >"$T/before.sum"
+    run_rescue --plan --repair full
+    assert_rc 0
+    err_empty
+    golden plan-repair-full
+    out_has "# plan only: nothing has been changed"
+    out_lacks "RESTART"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    no_backup_dir
+    ns_read_only
+    no_mutating_calls
+    run_rescue --repair full --yes
+    assert_rc 0
+    put "$SC_REL/preferences.plist" "<plist>rebuilt by macOS after the restart</plist>"
+    tree_sum "$ROOT" >"$T/before.sum"
+    run_rescue --plan --restore-backup "/$BK_REL/"
+    assert_rc 0
+    err_empty
+    golden plan-restore-backup
+    out_lacks "RESTART"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    absent "$ROOT/$BK_REL-2"
+    end
+}
+
+test_full_restore_menu() {
+    local sc n old="Users/Shared/ItHurtsWhenIP-backups/20250101T000000Z"
+    begin "56  menu: full reset (RESET), then restore a backup picked from the list, newest first (RESTORE)"
+    tree_sc
+    sc="$ROOT/$SC_REL"
+    env_set "IHWIP_TEST_STDIN_TTY=1"
+    input 6 RESET
+    run_rescue_in "$T/in.txt"
+    assert_rc 0
+    out_has "6) Full network reset (type RESET; all network settings are rebuilt after you restart)"
+    out_has "# repair: full"
+    out_has "Type RESET to continue:"
+    for n in $SC_NAMES; do absent "$sc/$n"; done
+    file_has "$ROOT/$BK_REL/rescue.log" "# confirmed by typing RESET"
+    last_line_is "$RESTART_LINE"
+    cp -Rp "$ROOT/$BK_REL" "$ROOT/$old"
+    mkdir "$ROOT/Users/Shared/ItHurtsWhenIP-backups/20240101T000000Z"
+    put "Users/Shared/ItHurtsWhenIP-backups/20240101T000000Z/plan.txt" "an uninstall backup: not listed"
+    input 7 9 x 1 RESTORE
+    run_rescue_in "$T/in.txt"
+    assert_rc 0
+    out_has "7) Restore a backup of a full network reset (type RESTORE)"
+    out_has "  1) /$BK_REL"
+    out_has "  2) /$old"
+    out_lacks "20240101T000000Z"
+    out_has "Not a choice: 9"
+    out_has "Not a choice: x"
+    out_has "# restore-backup: /$BK_REL"
+    out_has "Type RESTORE to continue:"
+    for n in $SC_NAMES; do same_file "$T/orig/$n" "$sc/$n"; done
+    file_has "$ROOT/$BK_REL-2/rescue.log" "# confirmed by typing RESTORE"
+    last_line_is "$RESTART_LINE"
+    no_temp_files
+    end
+
+    begin "56b menu: no restorable backup, quitting the list, or a wrong word change nothing (exit 2)"
+    tree_sc
+    env_set "IHWIP_TEST_STDIN_TTY=1"
+    tree_sum "$ROOT" >"$T/before.sum"
+    input 7
+    run_rescue_in "$T/in.txt"
+    assert_rc 2
+    out_has "so there is nothing to restore"
+    err_has "cancelled: nothing has been changed"
+    input 6 reset
+    run_rescue_in "$T/in.txt"
+    assert_rc 2
+    out_has "Type RESET to continue:"
+    err_has "cancelled: nothing has been changed"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    no_backup_dir
+    input 6 RESET
+    run_rescue_in "$T/in.txt"
+    assert_rc 0
+    tree_sum "$ROOT" >"$T/before.sum"
+    input 7 q
+    run_rescue_in "$T/in.txt"
+    assert_rc 2
+    err_has "cancelled: nothing has been changed"
+    input 7 1 restore
+    run_rescue_in "$T/in.txt"
+    assert_rc 2
+    out_has "Type RESTORE to continue:"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    absent "$ROOT/$BK_REL-2"
+    end
+}
+
+test_restore_args() {
+    begin "57  --restore-backup argument rules and the IHWIP_SHASUM guard: exit 2, nothing changed"
+    tree_sc
+    tree_sum "$ROOT" >"$T/before.sum"
+    refused "--restore-backup cannot be combined with --repair" --restore-backup "/$BK_REL" --repair soft --yes
+    refused "--restore-backup cannot be combined with --repair" --plan --repair full --restore-backup "/$BK_REL"
+    refused "--restore-backup cannot be combined with --uninstall" --uninstall --restore-backup "/$BK_REL" --yes
+    refused "--restore-backup cannot be combined with --network" --restore-backup "/$BK_REL" --network leave --yes
+    refused "--restore-backup cannot be combined with --wait-pid" --plan --restore-backup "/$BK_REL" --wait-pid 123
+    refused "missing value for --restore-backup" --restore-backup
+    refused "missing value for --restore-backup" --restore-backup= --yes
+    refused "missing value for --restore-backup" --restore-backup --yes
+    refused "choose one --restore-backup" --restore-backup "/$BK_REL" --restore-backup=/x --yes
+    refused "--restore-backup: the folder name must not contain tabs or line breaks" --restore-backup "/a${TAB}b" --yes
+    refused "--restore-backup needs confirmation: run it in Terminal, or pass --yes" --restore-backup "/$BK_REL"
+    env_unset IHWIP_SHASUM
+    refusal "test mode needs IHWIP_SHASUM set to a fake tool" --plan
+    env_set "IHWIP_SHASUM=/usr/bin/shasum"
+    refusal "IHWIP_SHASUM points into a system tools folder" --plan
+    reset_env
+    run_probe 0 restore
+    assert_rc 0
+    out_has "TEST_MODE=0"
+    env_unset IHWIP_ROOT
+    run_probe 501 restore
+    assert_rc 2
+    err_has "--restore-backup needs administrator rights. Run:  sudo bash ithurtswhenip-rescue.command --restore-backup <backup folder>"
+    reset_env
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    no_backup_dir
+    no_mutating_calls
+    end
+}
+
+test_uninstall_never_touches_sc() {
+    local sc
+    begin "58  --uninstall never plans or touches SystemConfiguration: plan-full golden unchanged, files untouched"
+    tree_full
+    sc_files
+    sc="$ROOT/$SC_REL"
+    tree_sum "$sc" >"$T/sc-before.sum"
+    run_rescue --plan
+    assert_rc 0
+    err_empty
+    golden plan-full
+    out_lacks "SystemConfiguration"
+    out_lacks "RESET"
+    run_rescue --uninstall --yes
+    assert_rc 0
+    out_lacks "SystemConfiguration"
+    out_lacks "RESTART"
+    inventory_gone
+    tree_sum "$sc" >"$T/sc-after.sum"
+    same_file "$T/sc-before.sum" "$T/sc-after.sum"
+    absent "$ROOT/$BK_REL/system-configuration"
+    end
+}
+
 # ---------------------------------------------------------------- run
 
 echo "rescue script tests (temp folder: $SUITE)"
@@ -2634,6 +3178,15 @@ test_repair_failures
 test_repair_menu
 test_repair_guards
 test_repair_confirm
+test_full_reset
+test_full_reset_refusals
+test_full_reset_failures
+test_restore_backup
+test_restore_refusals
+test_full_restore_plans
+test_full_restore_menu
+test_restore_args
+test_uninstall_never_touches_sc
 test_journal_parser
 test_stage_b_finished
 test_syntax_and_lint

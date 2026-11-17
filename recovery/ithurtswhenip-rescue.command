@@ -12,6 +12,8 @@
 #     sudo bash ithurtswhenip-rescue.command --uninstall --network dhcp:"Wi-Fi"
 #     sudo bash ithurtswhenip-rescue.command --repair soft # flush DNS, renew DHCP leases
 #     sudo bash ithurtswhenip-rescue.command --repair service:"Wi-Fi"
+#     sudo bash ithurtswhenip-rescue.command --repair full  # full network reset (restart needed)
+#     sudo bash ithurtswhenip-rescue.command --restore-backup /Users/Shared/ItHurtsWhenIP-backups/<UTC time>
 #
 # Every removal is planned, backed up to /Users/Shared/ItHurtsWhenIP-backups/<UTC time>/,
 # executed, then verified. Unknown files that merely look related are reported,
@@ -27,12 +29,18 @@
 # "service:<name>" backs up one service's settings, switches it to DHCP, clears
 # its DNS servers and search domains and turns it off and on again. Both are
 # planned, confirmed (type REPAIR), backed up and verified like --uninstall.
+# "full" moves the four network configuration files out of
+# /Library/Preferences/SystemConfiguration into the backup folder (copied,
+# checksummed in SHA256SUMS and checked before anything is removed; type
+# RESET). macOS rebuilds them at the next restart; this script never restarts
+# the Mac. --restore-backup <folder> puts such a backup back (type RESTORE),
+# after backing up the current files the same way.
 #
 # Test mode (never as root): IHWIP_ROOT=<fake tree> plus IHWIP_NETWORKSETUP,
 # IHWIP_LAUNCHCTL, IHWIP_PKGUTIL, IHWIP_PGREP, IHWIP_PKILL, IHWIP_IPCONFIG,
-# IHWIP_DSCACHEUTIL and IHWIP_KILLALL pointing at fakes, optional
+# IHWIP_DSCACHEUTIL, IHWIP_KILLALL and IHWIP_SHASUM pointing at fakes, optional
 # IHWIP_NOW=YYYYMMDDTHHMMSSZ, IHWIP_TEST_STDIN_TTY=1 (treat piped stdin as a
-# terminal, to drive the menu and the UNINSTALL/REPAIR prompts),
+# terminal, to drive the menu and the typed confirmation prompts),
 # IHWIP_WAIT_TIMEOUT=<1-600> (seconds stage B waits) and IHWIP_REPAIR_WAIT=<1-60>
 # (seconds a repair waits for addresses). See recovery/tests/run-tests.sh.
 # As root, or without IHWIP_ROOT, every IHWIP_* variable is ignored.
@@ -69,10 +77,27 @@ REAL_PKILL="/usr/bin/pkill"
 REAL_IPCONFIG="/usr/sbin/ipconfig"
 REAL_DSCACHEUTIL="/usr/bin/dscacheutil"
 REAL_KILLALL="/usr/bin/killall"
+REAL_SHASUM="/usr/bin/shasum" # read-only: SHA-256 checksums for SHA256SUMS
+REAL_CHOWN="/usr/sbin/chown"  # restore only, and only when running as root
 PS_TOOL="/bin/ps" # read-only process lookups for --wait-pid
 
-OVERRIDE_VARS="IHWIP_ROOT IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL IHWIP_IPCONFIG IHWIP_DSCACHEUTIL IHWIP_KILLALL IHWIP_NOW IHWIP_TEST_STDIN_TTY IHWIP_WAIT_TIMEOUT IHWIP_REPAIR_WAIT"
-TOOL_VARS="IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL IHWIP_IPCONFIG IHWIP_DSCACHEUTIL IHWIP_KILLALL"
+OVERRIDE_VARS="IHWIP_ROOT IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL IHWIP_IPCONFIG IHWIP_DSCACHEUTIL IHWIP_KILLALL IHWIP_SHASUM IHWIP_NOW IHWIP_TEST_STDIN_TTY IHWIP_WAIT_TIMEOUT IHWIP_REPAIR_WAIT"
+TOOL_VARS="IHWIP_NETWORKSETUP IHWIP_LAUNCHCTL IHWIP_PKGUTIL IHWIP_PGREP IHWIP_PKILL IHWIP_IPCONFIG IHWIP_DSCACHEUTIL IHWIP_KILLALL IHWIP_SHASUM"
+
+# Full network reset (--repair full) and --restore-backup: exactly these files
+# in this folder, never anything else in it (no globbing). macOS rebuilds them
+# at the next restart. TODO(verify) the list on the oldest and newest macOS the
+# team runs (com.apple.network.identification.plist is absent on macOS 26).
+SC_DIR="/Library/Preferences/SystemConfiguration"
+SC_FILES="preferences.plist NetworkInterfaces.plist com.apple.network.identification.plist com.apple.airport.preferences.plist"
+SC_BACKUP_SUB="system-configuration"
+MANIFEST_MAX_BYTES=4096
+SC_FILE_MAX_BYTES=16777216 # 16 MB: larger "network files" in a backup are refused
+RESET_NOTE_1="after the next restart macOS rebuilds all network services, static IP settings, Locations and the service order from scratch"
+RESET_NOTE_2="Wi-Fi networks may need to be rejoined"
+RESET_NOTE_3="the running network keeps working until you restart the Mac yourself; this script never restarts it"
+RESTORE_NOTE="the restored files take effect after the next restart; until then the running network keeps its current settings; this script never restarts the Mac"
+RESTART_TEXT="RESTART NEEDED: restart this Mac yourself to finish; until then the running network keeps its current settings"
 
 # System inventory, in plan order: path | back up first (y/n) | kind (file|dir|socket|app).
 SYSTEM_ITEMS="
@@ -150,7 +175,8 @@ one_line() {
 print_usage() {
     cat <<EOF
 Usage: sudo bash $SCRIPT_NAME [--plan | --uninstall] [options]
-       sudo bash $SCRIPT_NAME [--plan] --repair soft|service:"<service>" [--yes] [--log <path>]
+       sudo bash $SCRIPT_NAME [--plan] --repair soft|service:"<service>"|full [--yes] [--log <path>]
+       sudo bash $SCRIPT_NAME [--plan] --restore-backup <backup folder> [--yes] [--log <path>]
        sudo bash $SCRIPT_NAME            (numbered menu, in Terminal)
        bash $SCRIPT_NAME --help
 EOF
@@ -172,9 +198,14 @@ Actions:
   --uninstall           Back up, then remove everything listed by --plan.
                         Needs sudo. Asks you to type UNINSTALL unless --yes.
   --repair ...          Repair network settings (see below). Needs sudo. Asks
-                        you to type REPAIR unless --yes.
+                        you to type REPAIR (RESET for full) unless --yes.
+  --restore-backup <backup folder>
+                        Put back the network configuration files a full reset
+                        moved away (see below). Needs sudo. Asks you to type
+                        RESTORE unless --yes.
   (no action)           In Terminal: a numbered menu (show the plan, uninstall
-                        with a network choice, repair the network, quit).
+                        with a network choice, repair or reset the network,
+                        restore a backup, quit).
                         Otherwise: print the plan and exit 2.
 
 Network options (may be repeated; the default is leave):
@@ -205,7 +236,31 @@ Network repair (its own action: it cannot be combined with --uninstall,
                         DNS servers and search domains, then turn it off and on
                         again. The plan shows the current values first, and
                         they are backed up before anything changes.
-  --repair full         A full network reset is not part of this version.
+  --repair full         Full network reset: copy these files from
+                        $SC_DIR
+                        into the backup folder (with a SHA256SUMS list, checked
+                        before anything is removed), then remove them:
+                        preferences.plist, NetworkInterfaces.plist,
+                        com.apple.network.identification.plist and
+                        com.apple.airport.preferences.plist (those that exist;
+                        symlinks are left alone). Nothing else in that folder
+                        is touched. Asks you to type RESET unless --yes.
+                        After the next restart macOS rebuilds all network
+                        services, static IP settings, Locations and the service
+                        order from scratch, and Wi-Fi networks may need to be
+                        rejoined. Until you restart, the running network keeps
+                        working. This script never restarts the Mac.
+
+Restoring a full reset (its own action, like --repair):
+  --restore-backup <backup folder>
+                        <backup folder> is one folder inside
+                        $BACKUP_PARENT/$BACKUP_NAME/ (as printed by the reset)
+                        that holds $SC_BACKUP_SUB/SHA256SUMS. Every file listed
+                        there must be one of the four names above and match its
+                        checksum, or nothing is done. The current files are
+                        backed up first (to a new backup folder), then the
+                        backed-up files are put in place. Restart the Mac
+                        yourself afterwards.
 
 Other options:
   --yes                 Do not ask for confirmation (the app passes this after
@@ -225,16 +280,17 @@ Other options:
 Exit codes:
   0  everything worked
   1  some steps failed (each one is listed at the end)
-  2  refused: bad arguments, not run with sudo, cancelled or quit, a --network
-     or --repair choice that does not fit this Mac, or no action given outside
-     Terminal
+  2  refused: bad arguments, not run with sudo, cancelled or quit, a --network,
+     --repair or --restore-backup choice that does not fit this Mac (or a
+     backup that fails its checks), or no action given outside Terminal
 
 Example (changes nothing):
   sudo bash $SCRIPT_NAME --plan
 
 --plan only reads: it never changes files, background services, receipts or
 network settings. A repair whose only problem is that a service has no DHCP
-address yet still exits 0; the result lists it under warnings.
+address yet still exits 0; the result lists it under warnings. A full reset
+or a restore ends with "RESTART needed" when it changed files.
 Backups go to $BACKUP_PARENT/$BACKUP_NAME/<UTC time>/ and are kept.
 EOF
 }
@@ -279,7 +335,7 @@ check_network_value() {
 }
 
 # check_repair_value <value>: the one place that knows the --repair tiers.
-# Sets REPAIR_TIER (soft|service) and REPAIR_SVC.
+# Sets REPAIR_TIER (soft|service|full) and REPAIR_SVC.
 check_repair_value() {
     local svc
     case "$1" in
@@ -295,11 +351,8 @@ check_repair_value() {
             REPAIR_TIER=service
             REPAIR_SVC="$svc"
             ;;
-        full)
-            # Phase 3.2 fills this in (typed confirm word: RESET).
-            refuse "--repair full (full network reset) is not part of this version of the script. Nothing has been changed."
-            ;;
-        *) usage_error "unknown --repair value: $1 (use soft or service:<service>)" ;;
+        full) REPAIR_TIER=full ;;
+        *) usage_error "unknown --repair value: $1 (use soft, service:<service> or full)" ;;
     esac
 }
 
@@ -314,8 +367,21 @@ set_repair() {
     check_repair_value "$1"
 }
 
+set_restore() {
+    if [ "$RESTORE_GIVEN" -eq 1 ]; then
+        usage_error "choose one --restore-backup"
+    fi
+    case "$1" in
+        "" | --*) usage_error "missing value for --restore-backup" ;;
+    esac
+    RESTORE_ARG="$1"
+    RESTORE_GIVEN=1
+}
+
 parse_args() {
     ACTION=""
+    RESTORE_ARG=""
+    RESTORE_GIVEN=0
     REPAIR_TIER=""
     REPAIR_SVC=""
     REPAIR_ARG=""
@@ -362,6 +428,12 @@ parse_args() {
                 shift
                 ;;
             --repair=*) set_repair "${1#--repair=}" ;;
+            --restore-backup)
+                need_value "$@"
+                set_restore "$2"
+                shift
+                ;;
+            --restore-backup=*) set_restore "${1#--restore-backup=}" ;;
             -h | --help) SHOW_HELP=1 ;;
             --version) SHOW_VERSION=1 ;;
             *) usage_error "unknown option: $1" ;;
@@ -454,6 +526,7 @@ apply_guards() {
     IPCONFIG="$REAL_IPCONFIG"
     DSCACHEUTIL="$REAL_DSCACHEUTIL"
     KILLALL="$REAL_KILLALL"
+    SHASUM="$REAL_SHASUM"
     R=""
     TEST_MODE=0
     WAIT_TIMEOUT="$WAIT_TIMEOUT_DEFAULT"
@@ -541,10 +614,12 @@ apply_guards() {
     IPCONFIG="$IHWIP_IPCONFIG"
     DSCACHEUTIL="$IHWIP_DSCACHEUTIL"
     KILLALL="$IHWIP_KILLALL"
+    SHASUM="$IHWIP_SHASUM"
     return 0
 }
 
-# mode_allowed <action> <euid>: --uninstall and --repair need root, or test mode.
+# mode_allowed <action> <euid>: --uninstall, --repair and --restore-backup
+# need root, or test mode.
 mode_allowed() {
     if [ "$1" = "uninstall" ] && [ "$2" != "0" ] && [ "$TEST_MODE" -ne 1 ]; then
         refuse "--uninstall needs administrator rights. Run:  sudo bash $SCRIPT_NAME --uninstall"
@@ -553,6 +628,9 @@ mode_allowed() {
         local hint="soft"
         if [ -n "${REPAIR_ARG:-}" ]; then hint=$(printf '%q' "$REPAIR_ARG"); fi
         refuse "--repair needs administrator rights. Run:  sudo bash $SCRIPT_NAME --repair $hint"
+    fi
+    if [ "$1" = "restore" ] && [ "$2" != "0" ] && [ "$TEST_MODE" -ne 1 ]; then
+        refuse "--restore-backup needs administrator rights. Run:  sudo bash $SCRIPT_NAME --restore-backup <backup folder>"
     fi
     return 0
 }
@@ -1809,14 +1887,327 @@ resolve_repair() {
     RA_DETAIL=()
     RA_DEV=()
     HAS_WORK=1
-    if [ -n "$NET_ERR" ]; then
+    # A full reset does not need networksetup (it may be the broken part):
+    # an unreadable network is only noted in its plan and snapshot.
+    if [ -n "$NET_ERR" ] && [ "$REPAIR_TIER" != "full" ]; then
         refuse "cannot plan the repair: $NET_ERR. Nothing has been changed."
     fi
     case "$REPAIR_TIER" in
         soft) resolve_soft ;;
         service) resolve_service ;;
+        full) resolve_full ;;
         *) refuse "no repair chosen" ;;
     esac
+}
+
+# ---------------------------------------------------------------- full reset / restore choices
+
+# file_size <path>: bytes, or nothing.
+file_size() {
+    stat -f '%z' "$1" 2>/dev/null
+}
+
+# sha256_of <path>: sets SUM to the file's SHA-256 (64 lowercase hex digits).
+# Read-only. Returns 1 when the tool fails or prints anything else.
+sha256_of() {
+    local out
+    SUM=""
+    out=$("$SHASUM" -a 256 -- "$1" 2>/dev/null </dev/null) || return 1
+    out="${out%%[[:space:]]*}"
+    case "$out" in
+        "" | *[!0-9a-f]*) return 1 ;;
+    esac
+    [ ${#out} -eq 64 ] || return 1
+    SUM="$out"
+}
+
+# is_sc_name <name>: one of the four SC_FILES names, exactly.
+is_sc_name() {
+    case " $SC_FILES " in
+        *" $1 "*) return 0 ;;
+    esac
+    return 1
+}
+
+# restore_group <group of the backup copy>: pure. The group a restored file
+# gets (its owner is always root): the backup copy's group when that is wheel
+# or admin (macOS uses both here), otherwise wheel.
+restore_group() {
+    case "$1" in
+        wheel | admin) printf '%s' "$1" ;;
+        *) printf 'wheel' ;;
+    esac
+}
+
+# real_dir_at <full path> <expected resolved path>: a real folder (not a
+# symlink) owned by root (or, in test mode, by the user running the tests)
+# that resolves to exactly the expected place (inside the test root in test mode).
+real_dir_at() {
+    local res
+    [ -L "$1" ] && return 1
+    [ -d "$1" ] || return 1
+    owned_ok "$1" || return 1
+    res=$(cd -P -- "$1" 2>/dev/null && pwd -P) || return 1
+    [ "$res" = "$2" ] || return 1
+    if [ "$TEST_MODE" -eq 1 ]; then
+        case "$res/" in
+            "$R"/*) ;;
+            *) return 1 ;;
+        esac
+    fi
+    return 0
+}
+
+# sc_dir_ok: SystemConfiguration is a real folder exactly where it belongs.
+sc_dir_ok() {
+    [ -L "$R$SC_DIR" ] && return 1
+    [ -d "$R$SC_DIR" ] || return 1
+    parent_ok "$SC_DIR/preferences.plist" /Library
+}
+
+# manifest_check <system-configuration folder (full path)>: read-only. The
+# folder's SHA256SUMS must be a small regular file whose every line is exactly
+# "<64 lowercase hex>  <name>" with one of the four SC_FILES names, each name
+# once, and every listed file must be a regular file (not a symlink) owned by
+# root that matches its checksum. Sets MF_NAME[] MF_SUM[] MF_SIZE[]; on
+# failure returns 1 with MF_REASON.
+manifest_check() {
+    local dir="$1" f="$1/SHA256SUMS" size text line hex name i p
+    MF_NAME=()
+    MF_SUM=()
+    MF_SIZE=()
+    MF_REASON=""
+    if [ -L "$f" ] || [ ! -f "$f" ]; then
+        MF_REASON="$SC_BACKUP_SUB/SHA256SUMS is missing, a symlink or not a regular file"
+        return 1
+    fi
+    if ! owned_ok "$f"; then
+        MF_REASON="$SC_BACKUP_SUB/SHA256SUMS is not owned by root"
+        return 1
+    fi
+    size=$(file_size "$f")
+    case "$size" in
+        "" | *[!0-9]*)
+            MF_REASON="$SC_BACKUP_SUB/SHA256SUMS cannot be read"
+            return 1
+            ;;
+    esac
+    if [ "$size" -gt "$MANIFEST_MAX_BYTES" ]; then
+        MF_REASON="$SC_BACKUP_SUB/SHA256SUMS is larger than 4 KB"
+        return 1
+    fi
+    if [ ! -r "$f" ] || ! text=$(cat -- "$f" 2>/dev/null && printf x); then
+        MF_REASON="$SC_BACKUP_SUB/SHA256SUMS cannot be read"
+        return 1
+    fi
+    text="${text%x}"
+    if [ "${#text}" -ne "$size" ]; then
+        MF_REASON="$SC_BACKUP_SUB/SHA256SUMS contains NUL bytes"
+        return 1
+    fi
+    case "$text" in
+        "")
+            MF_REASON="$SC_BACKUP_SUB/SHA256SUMS lists no files"
+            return 1
+            ;;
+        *"$NL") text="${text%"$NL"}" ;;
+        *)
+            MF_REASON="$SC_BACKUP_SUB/SHA256SUMS does not end with a line break"
+            return 1
+            ;;
+    esac
+    while IFS= read -r line; do
+        hex="${line:0:64}"
+        name="${line:66}"
+        case "$hex" in
+            *[!0-9a-f]*) hex="" ;;
+        esac
+        if [ ${#hex} -ne 64 ] || [ "${line:64:2}" != "  " ] || [ -z "$name" ]; then
+            MF_REASON="$SC_BACKUP_SUB/SHA256SUMS has a line that is not \"<sha256>  <file name>\""
+            return 1
+        fi
+        if ! is_sc_name "$name"; then
+            MF_REASON="$SC_BACKUP_SUB/SHA256SUMS lists a file that is not a network configuration file: $(one_line "$name")"
+            return 1
+        fi
+        i=0
+        while [ "$i" -lt ${#MF_NAME[@]} ]; do
+            if [ "${MF_NAME[i]}" = "$name" ]; then
+                MF_REASON="$SC_BACKUP_SUB/SHA256SUMS lists $name twice"
+                return 1
+            fi
+            i=$((i + 1))
+        done
+        i=${#MF_NAME[@]}
+        MF_NAME[i]="$name"
+        MF_SUM[i]="$hex"
+    done <<<"$text"
+    i=0
+    while [ "$i" -lt ${#MF_NAME[@]} ]; do
+        name="${MF_NAME[i]}"
+        p="$dir/$name"
+        if [ -L "$p" ] || [ ! -f "$p" ]; then
+            MF_REASON="$SC_BACKUP_SUB/$name is missing, a symlink or not a regular file"
+            return 1
+        fi
+        if ! owned_ok "$p"; then
+            MF_REASON="$SC_BACKUP_SUB/$name is not owned by root"
+            return 1
+        fi
+        size=$(file_size "$p")
+        case "$size" in
+            "" | *[!0-9]*)
+                MF_REASON="$SC_BACKUP_SUB/$name cannot be read"
+                return 1
+                ;;
+        esac
+        if [ "$size" -gt "$SC_FILE_MAX_BYTES" ]; then
+            MF_REASON="$SC_BACKUP_SUB/$name is larger than 16 MB"
+            return 1
+        fi
+        if ! sha256_of "$p"; then
+            MF_REASON="could not compute the checksum of $SC_BACKUP_SUB/$name"
+            return 1
+        fi
+        if [ "$SUM" != "${MF_SUM[i]}" ]; then
+            MF_REASON="$SC_BACKUP_SUB/$name does not match its checksum in SHA256SUMS (changed or damaged)"
+            return 1
+        fi
+        MF_SIZE[i]="$size"
+        i=$((i + 1))
+    done
+    return 0
+}
+
+# resolve_full: read-only. One entry per SC_FILES name: SCF_STATE move (a
+# regular file), absent, symlink or other (not a regular file); refuses
+# (exit 2) when the folder is not where it belongs or nothing is there to move.
+# Only here, for a full-reset run, do the four paths go on INV_LIST, so
+# safe_remove can remove them; --uninstall never runs this.
+resolve_full() {
+    local name full i n=0
+    SCF_NAME=()
+    SCF_STATE=()
+    SCF_SIZE=()
+    if ! exists "$R$SC_DIR"; then
+        refuse "--repair full: $SC_DIR does not exist. Nothing has been changed."
+    fi
+    if ! sc_dir_ok; then
+        refuse "--repair full: $SC_DIR is a symlink, not a folder, or resolves outside its expected location. Nothing has been changed."
+    fi
+    INV_LIST="$NL"
+    for name in $SC_FILES; do
+        full="$R$SC_DIR/$name"
+        i=${#SCF_NAME[@]}
+        SCF_NAME[i]="$name"
+        SCF_SIZE[i]="-"
+        if [ -L "$full" ]; then
+            SCF_STATE[i]=symlink
+        elif [ ! -e "$full" ]; then
+            SCF_STATE[i]=absent
+        elif [ ! -f "$full" ]; then
+            SCF_STATE[i]=other
+        else
+            SCF_STATE[i]=move
+            SCF_SIZE[i]=$(file_size "$full")
+            INV_LIST="$INV_LIST$SC_DIR/$name$NL"
+            n=$((n + 1))
+        fi
+    done
+    if [ "$n" -eq 0 ]; then
+        refuse "--repair full: none of the network configuration files is in $SC_DIR (already reset? then restart the Mac). Nothing has been changed."
+    fi
+}
+
+# backup_base_ok <display path>: one of the folders choose_backup_base uses.
+backup_base_ok() {
+    case "$1" in
+        "$BACKUP_PARENT/$BACKUP_NAME") return 0 ;;
+        "$BACKUP_PARENT/$BACKUP_NAME".[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) return 0 ;;
+    esac
+    return 1
+}
+
+# resolve_restore: read-only. Checks RESTORE_ARG and the backup in it and the
+# current files (refusing with exit 2 before anything is changed). Sets
+# RS_DIR (display), RS_SRC (its system-configuration folder, full path),
+# MF_* (the files to restore), RS_CUR[] (present|absent per MF entry),
+# RS_BACKUP_NAMES (current files backed up first, by name)
+# and RS_NOT_IN[] (SC_FILES names this backup does not hold).
+resolve_restore() {
+    local d="$RESTORE_ARG" base leaf ures sres bres dres name full i
+    local why="Nothing has been changed."
+    case "$d" in
+        *"$TAB"* | *"$NL"*) refuse "--restore-backup: the folder name must not contain tabs or line breaks. $why" ;;
+        /*) ;;
+        *) refuse "--restore-backup needs the full path of a backup folder, e.g. $BACKUP_PARENT/$BACKUP_NAME/20261115T120000Z. $why" ;;
+    esac
+    case "$d" in
+        ?*/) d="${d%/}" ;;
+    esac
+    case "$d" in
+        */ | *//* | */./* | */../* | */. | */..) refuse "--restore-backup: unexpected path form: $d. $why" ;;
+    esac
+    leaf="${d##*/}"
+    base="${d%/*}"
+    if ! backup_base_ok "$base"; then
+        refuse "--restore-backup: $d is not a folder directly inside $BACKUP_PARENT/$BACKUP_NAME. $why"
+    fi
+    case "$leaf" in
+        "" | .* | *[!A-Za-z0-9._-]*) refuse "--restore-backup: unexpected backup folder name: $leaf. $why" ;;
+    esac
+    ures=$(cd -P -- "$R/Users" 2>/dev/null && pwd -P)
+    sres=$(cd -P -- "$R$BACKUP_PARENT" 2>/dev/null && pwd -P)
+    if [ -z "$ures" ] || [ -z "$sres" ] || [ "$sres" != "$ures/Shared" ]; then
+        refuse "--restore-backup: $BACKUP_PARENT is missing or resolves outside its expected location. $why"
+    fi
+    bres="$sres/${base##*/}"
+    if ! real_dir_at "$R$base" "$bres"; then
+        refuse "--restore-backup: $base is missing, a symlink, not a folder or not owned by root. $why"
+    fi
+    dres="$bres/$leaf"
+    if ! real_dir_at "$R$d" "$dres"; then
+        refuse "--restore-backup: $d is missing, a symlink, not a folder or not owned by root. $why"
+    fi
+    if ! real_dir_at "$R$d/$SC_BACKUP_SUB" "$dres/$SC_BACKUP_SUB"; then
+        refuse "--restore-backup: $d has no $SC_BACKUP_SUB folder (or it is a symlink or not owned by root), so it is not a full-reset backup. $why"
+    fi
+    RS_DIR="$d"
+    RS_SRC="$R$d/$SC_BACKUP_SUB"
+    if ! manifest_check "$RS_SRC"; then
+        refuse "--restore-backup: $MF_REASON. $why"
+    fi
+    if ! exists "$R$SC_DIR" || ! sc_dir_ok; then
+        refuse "--restore-backup: $SC_DIR is missing, a symlink, not a folder, or resolves outside its expected location. $why"
+    fi
+    RS_CUR=()
+    RS_BACKUP_NAMES=()
+    i=0
+    while [ "$i" -lt ${#MF_NAME[@]} ]; do
+        name="${MF_NAME[i]}"
+        full="$R$SC_DIR/$name"
+        if [ -L "$full" ] || { [ -e "$full" ] && [ ! -f "$full" ]; }; then
+            refuse "--restore-backup: $SC_DIR/$name is a symlink or not a regular file; it is not replaced. $why"
+        fi
+        if [ -f "$full" ]; then
+            RS_CUR[i]=present
+            RS_BACKUP_NAMES[${#RS_BACKUP_NAMES[@]}]="$name"
+        else
+            RS_CUR[i]=absent
+        fi
+        i=$((i + 1))
+    done
+    RS_NOT_IN=()
+    for name in $SC_FILES; do
+        i=0
+        while [ "$i" -lt ${#MF_NAME[@]} ] && [ "${MF_NAME[i]}" != "$name" ]; do
+            i=$((i + 1))
+        done
+        if [ "$i" -eq ${#MF_NAME[@]} ]; then
+            RS_NOT_IN[${#RS_NOT_IN[@]}]="$name"
+        fi
+    done
+    RS_MF_NAMES="${MF_NAME[*]}"
 }
 
 # ---------------------------------------------------------------- state
@@ -1898,6 +2289,11 @@ choose_backup_base() {
         BACKUP_BASE="$std"
     fi
     BACKUP_DIR_DISPLAY="$BACKUP_BASE/$TS"
+    # create_backup_dir falls back to <TS>-2 when <TS> exists (e.g. a restore
+    # right after a reset): show the folder it will really use.
+    if exists "$R$BACKUP_DIR_DISPLAY"; then
+        BACKUP_DIR_DISPLAY="$BACKUP_BASE/$TS-2"
+    fi
 }
 
 # collect_state: read-only. FILES_WORK = something to stop, quit, remove or
@@ -2013,6 +2409,44 @@ rec() {
 #   link-local 169.254.x.x): reported, not a failure (exit 0 if nothing failed).
 # The result ends with "# failed steps: <n>[; failed checks: <n>]" and
 # "# warnings: <n>", each followed by the lines it counts.
+#
+# Full network reset (--repair full; same header with "# repair: full"):
+#   REPAIR   tier         full           -
+#   NOTE     info         backup-folder  <why the usual backup folder is not used>
+#   NOTE     info         network        <networksetup could not be read: only noted>
+#   BACKUP   snapshot     network        network-before.txt
+#   BACKUP   file         <SC path>      system-configuration/<name>     (one per file moved)
+#   BACKUP   manifest     SHA256SUMS     system-configuration/SHA256SUMS
+#   RESET    move         <SC path>      size=<bytes>   (copied, checked, then removed)
+#   RESET    absent       <SC path>      not present: nothing to move   (normal, not a warning)
+#   RESET    skip         <SC path>      symlink: not moved | not a regular file: not moved
+#   NOTE     info         reset          <what happens: 3 lines, rebuilt after a restart,
+#                                         Wi-Fi rejoin, running network keeps working>
+#   "# summary: backup=<n> move=<n> absent=<n> skip=<n>"
+#   <SC path> = /Library/Preferences/SystemConfiguration/<name>, <name> one of
+#   preferences.plist NetworkInterfaces.plist com.apple.network.identification.plist
+#   com.apple.airport.preferences.plist.
+# Restore (--restore-backup <dir>; header "# restore-backup: <dir>", "# backup
+# folder:" is the NEW folder the current files are copied to first):
+#   RESTORE  source       <dir>          files=<n>
+#   NOTE     info         backup-folder|network  <as above>
+#   BACKUP   snapshot     network        network-before.txt
+#   BACKUP   file         <SC path>      system-configuration/<name>     (current files, if any)
+#   BACKUP   manifest     SHA256SUMS     system-configuration/SHA256SUMS (if any current file)
+#   RESTORE  file         <SC path>      size=<bytes> current=present|absent
+#   NOTE     info         <SC path>      not in this backup: left as it is
+#   NOTE     info         restore        <takes effect after a restart; never restarts>
+#   "# summary: backup=<n> restore=<n>"
+# Their execution lines: OK|FAILED BACKUP file|manifest ... as planned;
+#   OK|FAILED BACKUP      check     system-configuration/SHA256SUMS  <n> file(s) match[ <reason>]
+#   OK|FAILED RESET       move      <SC path>  size=<bytes>[ <reason>]
+#   OK|FAILED RESTORE     file      <SC path>  size=<bytes> current=...[ <reason>]
+#   NOTE      info        <SC path>  owner not changed in test mode (as root: root:<wheel|admin>)
+#   VERIFY    ok|FAILED   reset:<SC path>    gone; backup copy matches SHA256SUMS[ | <reason>]
+#   VERIFY    ok|FAILED   restore:<SC path>  matches SHA256SUMS, mode 644[ | <reason>]
+# then the usual "# failed steps" / "# warnings" lines, and LAST, only when at
+# least one file was actually removed or replaced:
+#   RESTART  needed       -              RESTART NEEDED: <restart it yourself; no automatic restart>
 render_plan() {
     local i j k n p d label id sel cb=0 cn=0 cs=0 cq=0 cr=0 cf=0 cl=0 cx=0
     printf '# It Hurts When IP rescue script, version %s\n' "$RESCUE_VERSION"
@@ -2186,6 +2620,10 @@ render_repair_plan() {
         rec BACKUP snapshot "$REPAIR_SVC" service-before.txt
         cb=$((cb + 1))
     fi
+    if [ "$REPAIR_TIER" = "full" ]; then
+        render_full_body "$cb"
+        return 0
+    fi
     k=0
     while [ "$k" -lt ${#RA_KIND[@]} ]; do
         rec REPAIR "${RA_KIND[k]}" "${RA_SVC[k]}" "${RA_DETAIL[k]}"
@@ -2197,6 +2635,106 @@ render_repair_plan() {
         k=$((k + 1))
     done
     printf '# summary: backup=%s repair=%s leave=%s\n' "$cb" "$cr" "$cl"
+}
+
+# render_full_body <backup records so far>: the rest of a full-reset plan.
+render_full_body() {
+    local i cb="$1" cm=0 ca=0 cs=0 p
+    if [ -n "$NET_ERR" ]; then
+        rec NOTE info network "$NET_ERR"
+    fi
+    i=0
+    while [ "$i" -lt ${#SCF_NAME[@]} ]; do
+        if [ "${SCF_STATE[i]}" = "move" ]; then
+            rec BACKUP file "$SC_DIR/${SCF_NAME[i]}" "$SC_BACKUP_SUB/${SCF_NAME[i]}"
+            cb=$((cb + 1))
+        fi
+        i=$((i + 1))
+    done
+    rec BACKUP manifest SHA256SUMS "$SC_BACKUP_SUB/SHA256SUMS"
+    cb=$((cb + 1))
+    i=0
+    while [ "$i" -lt ${#SCF_NAME[@]} ]; do
+        p="$SC_DIR/${SCF_NAME[i]}"
+        case "${SCF_STATE[i]}" in
+            move)
+                rec RESET move "$p" "size=${SCF_SIZE[i]}"
+                cm=$((cm + 1))
+                ;;
+            absent)
+                rec RESET absent "$p" "not present: nothing to move"
+                ca=$((ca + 1))
+                ;;
+            symlink)
+                rec RESET skip "$p" "symlink: not moved"
+                cs=$((cs + 1))
+                ;;
+            *)
+                rec RESET skip "$p" "not a regular file: not moved"
+                cs=$((cs + 1))
+                ;;
+        esac
+        i=$((i + 1))
+    done
+    rec NOTE info reset "$RESET_NOTE_1"
+    rec NOTE info reset "$RESET_NOTE_2"
+    rec NOTE info reset "$RESET_NOTE_3"
+    printf '# summary: backup=%s move=%s absent=%s skip=%s\n' "$cb" "$cm" "$ca" "$cs"
+}
+
+# render_restore_plan <plan|restore>: pure; the --restore-backup plan.
+render_restore_plan() {
+    local i cb=0 cr=0 p
+    printf '# It Hurts When IP rescue script, version %s\n' "$RESCUE_VERSION"
+    printf '# mode: %s\n' "$1"
+    printf '# restore-backup: %s\n' "$RS_DIR"
+    if [ "$TEST_MODE" -eq 1 ]; then
+        printf '# test root: %s\n' "$R"
+    fi
+    printf '# backup folder: %s\n' "$BACKUP_DIR_DISPLAY"
+    if [ "$1" = "plan" ]; then
+        printf '# plan only: nothing has been changed\n'
+    else
+        printf '# nothing has been changed yet\n'
+    fi
+    rec RESTORE source "$RS_DIR" "files=${#MF_NAME[@]}"
+    if [ -n "$BACKUP_NOTE" ]; then
+        rec NOTE info backup-folder "$BACKUP_NOTE"
+    fi
+    if [ -n "$NET_ERR" ]; then
+        rec NOTE info network "$NET_ERR"
+    fi
+    rec BACKUP snapshot network network-before.txt
+    cb=$((cb + 1))
+    i=0
+    while [ "$i" -lt ${#RS_BACKUP_NAMES[@]} ]; do
+        rec BACKUP file "$SC_DIR/${RS_BACKUP_NAMES[i]}" "$SC_BACKUP_SUB/${RS_BACKUP_NAMES[i]}"
+        cb=$((cb + 1))
+        i=$((i + 1))
+    done
+    if [ ${#RS_BACKUP_NAMES[@]} -gt 0 ]; then
+        rec BACKUP manifest SHA256SUMS "$SC_BACKUP_SUB/SHA256SUMS"
+        cb=$((cb + 1))
+    fi
+    i=0
+    while [ "$i" -lt ${#MF_NAME[@]} ]; do
+        rec RESTORE file "$SC_DIR/${MF_NAME[i]}" "$(restore_detail "$i")"
+        cr=$((cr + 1))
+        i=$((i + 1))
+    done
+    i=0
+    while [ "$i" -lt ${#RS_NOT_IN[@]} ]; do
+        p="$SC_DIR/${RS_NOT_IN[i]}"
+        rec NOTE info "$p" "not in this backup: left as it is"
+        i=$((i + 1))
+    done
+    rec NOTE info restore "$RESTORE_NOTE"
+    printf '# summary: backup=%s restore=%s\n' "$cb" "$cr"
+}
+
+# restore_detail <MF index>: the DETAIL of a RESTORE file record.
+restore_detail() {
+    printf 'size=%s current=%s' "${MF_SIZE[$1]}" "${RS_CUR[$1]}"
 }
 
 # ---------------------------------------------------------------- execution
@@ -2238,7 +2776,7 @@ verify_fail() {
     FAIL_LIST="$FAIL_LIST$line$NL"
 }
 
-# confirm <word>: the user must type <word> exactly (UNINSTALL, REPAIR).
+# confirm <word>: the user must type <word> exactly (UNINSTALL, REPAIR, RESET, RESTORE).
 confirm() {
     local word="$1" answer=""
     printf 'Type %s to continue: ' "$word"
@@ -2290,6 +2828,8 @@ create_backup_dir() {
     return 0
 }
 
+# do_snapshot [noted]: with "noted" (full reset, restore) a networksetup that
+# cannot be read is only noted, not a failed step.
 do_snapshot() {
     local f="$BACKUP_DIR/network-before.txt" i
     read_network
@@ -2303,6 +2843,9 @@ do_snapshot() {
         done
     } >"$f" 2>/dev/null; then
         step_fail BACKUP snapshot network network-before.txt "could not write the snapshot"
+    elif [ -n "$NET_ERR" ] && [ "${1:-}" = "noted" ]; then
+        step_ok BACKUP snapshot network network-before.txt
+        say "NOTE${TAB}info${TAB}network${TAB}$NET_ERR"
     elif [ -n "$NET_ERR" ]; then
         step_fail BACKUP snapshot network network-before.txt "$NET_ERR"
     else
@@ -3085,15 +3628,224 @@ repair_report() {
     while IFS= read -r line; do
         [ -n "$line" ] && say "$line"
     done <<<"$WARN_LIST"
+    if [ "$RESTART_DUE" -eq 1 ]; then
+        say "RESTART${TAB}needed${TAB}-${TAB}$RESTART_TEXT"
+    fi
 }
 
-# run_repair: plan -> REPAIR -> backup folder + snapshots -> writes -> verify.
-# Never returns.
-run_repair() {
-    PLAN_TEXT=$(render_repair_plan repair)
+# ---------------------------------------------------------------- full reset / restore execution
+
+RESTART_DUE=0
+
+# backup_sc <name>...: copies those SystemConfiguration files (mode kept) into
+# <backup folder>/system-configuration, writes SHA256SUMS from the checksums
+# of the originals (each copy must match), then reads the manifest back
+# through manifest_check, the same check --restore-backup uses. Returns 1 (and
+# the caller removes and replaces nothing) when any step fails.
+backup_sc() {
+    local dir="$BACKUP_DIR/$SC_BACKUP_SUB" name src dest err a ok=1 lines="" n=0
+    if ! mkdir -- "$dir" 2>/dev/null; then
+        step_fail BACKUP dir "$SC_DIR" "$SC_BACKUP_SUB" "could not create $SC_BACKUP_SUB in the backup folder"
+        return 1
+    fi
+    chmod 755 "$dir" 2>/dev/null
+    for name in "$@"; do
+        src="$R$SC_DIR/$name"
+        dest="$dir/$name"
+        if [ -L "$src" ] || [ ! -f "$src" ] || ! parent_ok "$SC_DIR/$name" /Library; then
+            step_fail BACKUP file "$SC_DIR/$name" "$SC_BACKUP_SUB/$name" "no longer a regular file in its expected place"
+            ok=0
+            continue
+        fi
+        if ! err=$(cp -p -- "$src" "$dest" 2>&1) || [ ! -f "$dest" ]; then
+            step_fail BACKUP file "$SC_DIR/$name" "$SC_BACKUP_SUB/$name" "copy failed: $(one_line "${err:-copy is missing}")"
+            ok=0
+            continue
+        fi
+        if ! sha256_of "$src"; then
+            step_fail BACKUP file "$SC_DIR/$name" "$SC_BACKUP_SUB/$name" "could not compute the checksum of the original"
+            ok=0
+            continue
+        fi
+        a="$SUM"
+        if ! sha256_of "$dest" || [ "$SUM" != "$a" ]; then
+            step_fail BACKUP file "$SC_DIR/$name" "$SC_BACKUP_SUB/$name" "the copy does not match the original (checksum)"
+            ok=0
+            continue
+        fi
+        lines="$lines$a  $name$NL"
+        n=$((n + 1))
+        step_ok BACKUP file "$SC_DIR/$name" "$SC_BACKUP_SUB/$name"
+    done
+    [ "$ok" -eq 1 ] || return 1
+    if ! printf '%s' "$lines" >"$dir/SHA256SUMS" 2>/dev/null; then
+        step_fail BACKUP manifest SHA256SUMS "$SC_BACKUP_SUB/SHA256SUMS" "could not write SHA256SUMS"
+        return 1
+    fi
+    step_ok BACKUP manifest SHA256SUMS "$SC_BACKUP_SUB/SHA256SUMS"
+    if ! manifest_check "$dir"; then
+        step_fail BACKUP check "$SC_BACKUP_SUB/SHA256SUMS" - "$MF_REASON"
+        return 1
+    fi
+    if [ ${#MF_NAME[@]} -ne "$n" ]; then
+        step_fail BACKUP check "$SC_BACKUP_SUB/SHA256SUMS" - "lists ${#MF_NAME[@]} file(s), expected $n"
+        return 1
+    fi
+    step_ok BACKUP check "$SC_BACKUP_SUB/SHA256SUMS" "$n file(s) match"
+    return 0
+}
+
+# do_full: backup (copy + SHA256SUMS + check) of every file planned to move;
+# only when all of that worked are the originals removed (safe_remove), then
+# each is verified gone with its backup copy matching the manifest.
+do_full() {
+    local i name p ok
+    local -a names=() moved=()
+    i=0
+    while [ "$i" -lt ${#SCF_NAME[@]} ]; do
+        if [ "${SCF_STATE[i]}" = "move" ]; then
+            names[${#names[@]}]="${SCF_NAME[i]}"
+        fi
+        i=$((i + 1))
+    done
+    if ! backup_sc "${names[@]}"; then
+        say "# stopped before changing anything: the backup of the network configuration files is not complete, so nothing was removed"
+        return 0
+    fi
+    i=0
+    while [ "$i" -lt ${#SCF_NAME[@]} ]; do
+        if [ "${SCF_STATE[i]}" = "move" ]; then
+            p="$SC_DIR/${SCF_NAME[i]}"
+            if [ -L "$R$p" ] || [ ! -f "$R$p" ]; then
+                step_fail RESET move "$p" "size=${SCF_SIZE[i]}" "no longer a regular file: not removed"
+            elif safe_remove "$p" /Library; then
+                step_ok RESET move "$p" "size=${SCF_SIZE[i]}"
+                moved[${#moved[@]}]="${SCF_NAME[i]}"
+                RESTART_DUE=1
+            else
+                step_fail RESET move "$p" "size=${SCF_SIZE[i]}" "$RM_REASON"
+            fi
+        fi
+        i=$((i + 1))
+    done
+    ok=1
+    if ! manifest_check "$BACKUP_DIR/$SC_BACKUP_SUB"; then ok=0; fi
+    for name in "${names[@]}"; do
+        p="$SC_DIR/$name"
+        if exists "$R$p"; then
+            verify_fail "reset:$p" "still present"
+        elif [ "$ok" -ne 1 ]; then
+            verify_fail "reset:$p" "gone, but the backup no longer checks out: $MF_REASON"
+        else
+            verify_ok "reset:$p" "gone; backup copy matches SHA256SUMS"
+        fi
+    done
+}
+
+# rs_cleanup <temp>...: removes the temporary files this run created itself
+# (mktemp names in SystemConfiguration), nothing else.
+rs_cleanup() {
+    local t
+    for t in "$@"; do
+        case "$t" in
+            "$R$SC_DIR"/.ihwip-restore.??????) rm -f -- "$t" ;;
+        esac
+    done
+}
+
+# do_restore: stage every file as a temp file in SystemConfiguration (copy,
+# mode 644, root:<group> when root, checksum), and only when all are staged,
+# rename each over its target (same folder: an atomic replace). Then verify.
+do_restore() {
+    local i name src tmp target grp err ok=1 mode
+    local -a tmps=()
+    if ! manifest_check "$RS_SRC" || [ "${MF_NAME[*]}" != "$RS_MF_NAMES" ]; then
+        step_fail RESTORE source "$RS_DIR" "files=${#MF_NAME[@]}" "the backup changed since it was checked: ${MF_REASON:-different files}"
+        say "# stopped before changing anything: nothing was replaced"
+        return 0
+    fi
+    i=0
+    while [ "$i" -lt ${#MF_NAME[@]} ]; do
+        name="${MF_NAME[i]}"
+        src="$RS_SRC/$name"
+        target="$R$SC_DIR/$name"
+        if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; } || ! parent_ok "$SC_DIR/$name" /Library; then
+            step_fail RESTORE file "$SC_DIR/$name" "$(restore_detail "$i")" "the current file is a symlink or not a regular file now"
+            ok=0
+            break
+        fi
+        if ! tmp=$(mktemp "$R$SC_DIR/.ihwip-restore.XXXXXX" 2>/dev/null) || [ -z "$tmp" ]; then
+            step_fail RESTORE file "$SC_DIR/$name" "$(restore_detail "$i")" "could not create a temporary file in $SC_DIR"
+            ok=0
+            break
+        fi
+        tmps[${#tmps[@]}]="$tmp"
+        if ! err=$(cp -- "$src" "$tmp" 2>&1) || ! chmod 644 "$tmp" 2>/dev/null; then
+            step_fail RESTORE file "$SC_DIR/$name" "$(restore_detail "$i")" "copy failed: $(one_line "${err:-chmod failed}")"
+            ok=0
+            break
+        fi
+        grp=$(restore_group "$(stat -f '%Sg' "$src" 2>/dev/null)")
+        if [ "$TEST_MODE" -eq 1 ]; then
+            say "NOTE${TAB}info${TAB}$SC_DIR/$name${TAB}owner not changed in test mode (as root: root:$grp)"
+        elif ! err=$("$REAL_CHOWN" "root:$grp" "$tmp" 2>&1); then
+            step_fail RESTORE file "$SC_DIR/$name" "$(restore_detail "$i")" "chown failed: $(one_line "${err:-no output}")"
+            ok=0
+            break
+        fi
+        if ! sha256_of "$tmp" || [ "$SUM" != "${MF_SUM[i]}" ]; then
+            step_fail RESTORE file "$SC_DIR/$name" "$(restore_detail "$i")" "the staged copy does not match SHA256SUMS"
+            ok=0
+            break
+        fi
+        i=$((i + 1))
+    done
+    if [ "$ok" -ne 1 ]; then
+        if [ ${#tmps[@]} -gt 0 ]; then rs_cleanup "${tmps[@]}"; fi
+        say "# stopped before changing anything: nothing was replaced"
+        return 0
+    fi
+    i=0
+    while [ "$i" -lt ${#MF_NAME[@]} ]; do
+        name="${MF_NAME[i]}"
+        target="$R$SC_DIR/$name"
+        tmp="${tmps[i]}"
+        if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+            step_fail RESTORE file "$SC_DIR/$name" "$(restore_detail "$i")" "the current file is a symlink or not a regular file now: not replaced"
+            rs_cleanup "$tmp"
+        elif err=$(mv -f -- "$tmp" "$target" 2>&1); then
+            step_ok RESTORE file "$SC_DIR/$name" "$(restore_detail "$i")"
+            RESTART_DUE=1
+        else
+            step_fail RESTORE file "$SC_DIR/$name" "$(restore_detail "$i")" "rename failed: $(one_line "${err:-no output}")"
+            rs_cleanup "$tmp"
+        fi
+        i=$((i + 1))
+    done
+    i=0
+    while [ "$i" -lt ${#MF_NAME[@]} ]; do
+        target="$R$SC_DIR/${MF_NAME[i]}"
+        mode=$(stat -f '%Lp' "$target" 2>/dev/null)
+        if [ -L "$target" ] || [ ! -f "$target" ]; then
+            verify_fail "restore:$SC_DIR/${MF_NAME[i]}" "missing or not a regular file"
+        elif ! sha256_of "$target" || [ "$SUM" != "${MF_SUM[i]}" ]; then
+            verify_fail "restore:$SC_DIR/${MF_NAME[i]}" "does not match SHA256SUMS"
+        elif [ "$mode" != "644" ]; then
+            verify_fail "restore:$SC_DIR/${MF_NAME[i]}" "mode $mode, expected 644"
+        else
+            verify_ok "restore:$SC_DIR/${MF_NAME[i]}" "matches SHA256SUMS, mode 644"
+        fi
+        i=$((i + 1))
+    done
+}
+
+# run_restore: plan -> RESTORE -> new backup folder (snapshot + current files
+# with their own SHA256SUMS) -> stage + rename -> verify. Never returns.
+run_restore() {
+    PLAN_TEXT=$(render_restore_plan restore)
     say "$PLAN_TEXT"
     if [ "$YES" -ne 1 ]; then
-        confirm REPAIR
+        confirm RESTORE
     fi
     if ! create_backup_dir; then
         step_fail BACKUP dir "$BACKUP_DIR_DISPLAY" - "$BACKUP_FAIL_REASON"
@@ -3106,8 +3858,50 @@ run_repair() {
     if ! printf '%s\n' "$PLAN_TEXT" >"$BACKUP_DIR/plan.txt" 2>/dev/null; then
         step_fail BACKUP file plan.txt - "could not write plan.txt"
     fi
-    do_snapshot
+    do_snapshot noted
+    if [ ${#RS_BACKUP_NAMES[@]} -gt 0 ] && ! backup_sc "${RS_BACKUP_NAMES[@]}"; then
+        say "# stopped before changing anything: the current network configuration files could not be backed up, so nothing was replaced"
+    else
+        do_restore
+    fi
+    repair_report
+    chmod -R a+rX "$BACKUP_DIR" 2>/dev/null
+    if failed_any; then
+        exit 1
+    fi
+    exit 0
+}
+
+# run_repair: plan -> REPAIR -> backup folder + snapshots -> writes -> verify.
+# Never returns.
+run_repair() {
+    PLAN_TEXT=$(render_repair_plan repair)
+    say "$PLAN_TEXT"
+    if [ "$YES" -ne 1 ]; then
+        if [ "$REPAIR_TIER" = "full" ]; then
+            confirm RESET
+        else
+            confirm REPAIR
+        fi
+    fi
+    if ! create_backup_dir; then
+        step_fail BACKUP dir "$BACKUP_DIR_DISPLAY" - "$BACKUP_FAIL_REASON"
+        say "# stopped before changing anything: no backup folder"
+        exit 1
+    fi
+    if [ "$LOG_GIVEN" -ne 1 ]; then
+        open_log "$BACKUP_DIR/rescue.log"
+    fi
+    if ! printf '%s\n' "$PLAN_TEXT" >"$BACKUP_DIR/plan.txt" 2>/dev/null; then
+        step_fail BACKUP file plan.txt - "could not write plan.txt"
+    fi
+    if [ "$REPAIR_TIER" = "full" ]; then
+        do_snapshot noted
+    else
+        do_snapshot
+    fi
     case "$REPAIR_TIER" in
+        full) do_full ;;
         soft) do_soft ;;
         service)
             if do_service_snapshot; then
@@ -3268,7 +4062,67 @@ menu_repair_service() {
     done
 }
 
-# menu_repair: the same path as the flags: resolve -> plan -> REPAIR -> run.
+# list_restorable: display paths of backup folders holding
+# system-configuration/SHA256SUMS, as "<folder name><TAB><display path>"
+# lines (unsorted). Read-only; symlinks are never followed.
+list_restorable() {
+    local b d bd
+    for b in "$R$BACKUP_PARENT/$BACKUP_NAME" "$R$BACKUP_PARENT/$BACKUP_NAME".*; do
+        [ -d "$b" ] || continue
+        [ -L "$b" ] && continue
+        bd="${b#"$R"}"
+        backup_base_ok "$bd" || continue
+        for d in "$b"/*; do
+            [ -d "$d" ] || continue
+            [ -L "$d" ] && continue
+            [ -L "$d/$SC_BACKUP_SUB" ] && continue
+            [ -f "$d/$SC_BACKUP_SUB/SHA256SUMS" ] || continue
+            printf '%s\t%s\n' "${d##*/}" "$bd/${d##*/}"
+        done
+    done
+}
+
+# menu_restore_pick: a numbered list, newest first (folder names are UTC
+# times); sets RESTORE_ARG like the flag would.
+menu_restore_pick() {
+    local list line n=0 i
+    local -a paths
+    list=$(list_restorable | LC_ALL=C sort -r)
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        paths[n]="${line#*"$TAB"}"
+        n=$((n + 1))
+    done <<<"$list"
+    if [ "$n" -eq 0 ]; then
+        printf 'No backup folder in %s holds a full-reset backup (%s/SHA256SUMS), so there is nothing to restore.\n' "$BACKUP_PARENT/$BACKUP_NAME" "$SC_BACKUP_SUB"
+        menu_quit
+    fi
+    while :; do
+        printf '\nRestore a full-reset backup: the current network configuration files are\n'
+        printf 'backed up first, then the chosen backup is put back. Restart the Mac yourself afterwards.\n'
+        i=0
+        while [ "$i" -lt "$n" ]; do
+            printf '  %s) %s\n' "$((i + 1))" "${paths[i]}"
+            i=$((i + 1))
+        done
+        printf 'Type a number, or q to quit: '
+        menu_read
+        case "$MENU_ANS" in
+            q | Q) menu_quit ;;
+            "" | *[!0-9]* | 0*) printf 'Not a choice: %s\n' "$MENU_ANS" ;;
+            *)
+                if [ ${#MENU_ANS} -le 3 ] && [ "$MENU_ANS" -ge 1 ] && [ "$MENU_ANS" -le "$n" ]; then
+                    RESTORE_ARG="${paths[$((MENU_ANS - 1))]}"
+                    RESTORE_GIVEN=1
+                    return 0
+                fi
+                printf 'Not a choice: %s\n' "$MENU_ANS"
+                ;;
+        esac
+    done
+}
+
+# menu_repair: the same path as the flags: resolve -> plan -> REPAIR/RESET -> run.
 menu_repair() {
     resolve_repair
     run_repair
@@ -3290,8 +4144,10 @@ run_menu() {
             "  3) Uninstall, and leave network settings as they are" \
             "  4) Repair network: soft refresh (flush DNS, renew DHCP leases; changes no settings)" \
             "  5) Repair network: reset one service (DHCP, clear its DNS, turn it off and on)" \
-            "  6) Quit (changes nothing)"
-        printf 'Choose 1-6: '
+            "  6) Full network reset (type RESET; all network settings are rebuilt after you restart)" \
+            "  7) Restore a backup of a full network reset (type RESTORE)" \
+            "  8) Quit (changes nothing)"
+        printf 'Choose 1-8: '
         menu_read
         case "$MENU_ANS" in
             1)
@@ -3321,8 +4177,21 @@ run_menu() {
                 menu_repair_service
                 menu_repair
                 ;;
-            6 | q | Q) menu_quit ;;
-            *) printf 'Please type a number from 1 to 6.\n' ;;
+            6)
+                mode_allowed repair "$EUID_NOW"
+                REPAIR_TIER=full
+                REPAIR_ARG=full
+                menu_repair
+                ;;
+            7)
+                mode_allowed restore "$EUID_NOW"
+                menu_restore_pick
+                choose_backup_base
+                resolve_restore
+                run_restore
+                ;;
+            8 | q | Q) menu_quit ;;
+            *) printf 'Please type a number from 1 to 8.\n' ;;
         esac
     done
 }
@@ -3341,6 +4210,20 @@ main() {
         exit 0
     fi
     check_network_choices
+    if [ "$RESTORE_GIVEN" -eq 1 ]; then
+        if [ -n "$REPAIR_TIER" ]; then
+            usage_error "--restore-backup cannot be combined with --repair"
+        fi
+        if [ "$ACTION" = "uninstall" ]; then
+            usage_error "--restore-backup cannot be combined with --uninstall"
+        fi
+        if [ "$NET_GIVEN" -eq 1 ]; then
+            usage_error "--restore-backup cannot be combined with --network"
+        fi
+        if [ -n "$WAIT_PID" ]; then
+            usage_error "--restore-backup cannot be combined with --wait-pid"
+        fi
+    fi
     if [ -n "$REPAIR_TIER" ]; then
         if [ "$ACTION" = "uninstall" ]; then
             usage_error "--repair cannot be combined with --uninstall"
@@ -3369,6 +4252,9 @@ main() {
     if [ -n "$REPAIR_TIER" ]; then
         if [ "$mode" = "plan" ]; then mode="repair-plan"; else mode="repair"; fi
     fi
+    if [ "$RESTORE_GIVEN" -eq 1 ]; then
+        if [ "$mode" = "plan" ]; then mode="restore-plan"; else mode="restore"; fi
+    fi
     if [ "$mode" = "none" ] && [ "$NET_GIVEN" -eq 0 ] && [ "$YES" -eq 0 ] && stdin_is_terminal; then
         mode="menu"
     fi
@@ -3379,6 +4265,9 @@ main() {
     fi
     if [ "$mode" = "repair" ] && [ "$YES" -ne 1 ] && ! stdin_is_terminal; then
         refuse "--repair needs confirmation: run it in Terminal, or pass --yes"
+    fi
+    if [ "$mode" = "restore" ] && [ "$YES" -ne 1 ] && ! stdin_is_terminal; then
+        refuse "--restore-backup needs confirmation: run it in Terminal, or pass --yes"
     fi
 
     init_time
@@ -3394,6 +4283,16 @@ main() {
                 exit 0
             fi
             run_repair
+            ;;
+        restore | restore-plan)
+            read_network
+            choose_backup_base
+            resolve_restore
+            if [ "$mode" = "restore-plan" ]; then
+                say "$(render_restore_plan plan)"
+                exit 0
+            fi
+            run_restore
             ;;
     esac
     build_inventory

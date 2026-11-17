@@ -1,0 +1,16 @@
+# It Hurts When IP rescue script, version 1
+# mode: plan
+# restore-backup: /Users/Shared/ItHurtsWhenIP-backups/20261115T120000Z
+# test root: <ROOT>
+# backup folder: /Users/Shared/ItHurtsWhenIP-backups/20261115T120000Z-2
+# plan only: nothing has been changed
+RESTORE	source	/Users/Shared/ItHurtsWhenIP-backups/20261115T120000Z	files=4
+BACKUP	snapshot	network	network-before.txt
+BACKUP	file	/Library/Preferences/SystemConfiguration/preferences.plist	system-configuration/preferences.plist
+BACKUP	manifest	SHA256SUMS	system-configuration/SHA256SUMS
+RESTORE	file	/Library/Preferences/SystemConfiguration/preferences.plist	size=62 current=present
+RESTORE	file	/Library/Preferences/SystemConfiguration/NetworkInterfaces.plist	size=35 current=absent
+RESTORE	file	/Library/Preferences/SystemConfiguration/com.apple.network.identification.plist	size=38 current=absent
+RESTORE	file	/Library/Preferences/SystemConfiguration/com.apple.airport.preferences.plist	size=36 current=absent
+NOTE	info	restore	the restored files take effect after the next restart; until then the running network keeps its current settings; this script never restarts the Mac
+# summary: backup=3 restore=4

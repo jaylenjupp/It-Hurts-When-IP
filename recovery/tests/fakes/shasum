@@ -1,0 +1,37 @@
+#!/bin/bash
+# Fake shasum for recovery/tests. Read-only: it runs the real /usr/bin/shasum,
+# which only reads files, so checksums in the tests are real SHA-256 values.
+#
+# Calls: every argv is appended to $IHWIP_FAKE_CALLS (if set).
+# IHWIP_FAKE_SHASUM_BAD=<text>: for a file path containing <text>, print a
+# wrong checksum (all zeros) instead, to simulate a copy that does not match.
+
+set -u
+
+root="${IHWIP_ROOT:-}"
+case "$root" in
+    "" | /)
+        echo "fake shasum: IHWIP_ROOT must point at a fake root" >&2
+        exit 98
+        ;;
+esac
+
+if [ -n "${IHWIP_FAKE_CALLS:-}" ]; then
+    { printf '%q ' shasum "$@"; echo; } >>"$IHWIP_FAKE_CALLS"
+fi
+
+if [ $# -ne 4 ] || [ "$1" != "-a" ] || [ "$2" != "256" ] || [ "$3" != "--" ]; then
+    echo "fake shasum: only 'shasum -a 256 -- <file>' is supported" >&2
+    exit 64
+fi
+bad="${IHWIP_FAKE_SHASUM_BAD:-}"
+if [ -n "$bad" ]; then
+    case "$4" in
+        *"$bad"*)
+            [ -f "$4" ] || exit 1
+            printf '%064d  %s\n' 0 "$4"
+            exit 0
+            ;;
+    esac
+fi
+exec /usr/bin/shasum -a 256 -- "$4"

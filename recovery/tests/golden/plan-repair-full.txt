@@ -1,0 +1,21 @@
+# It Hurts When IP rescue script, version 1
+# mode: plan
+# repair: full
+# test root: <ROOT>
+# backup folder: /Users/Shared/ItHurtsWhenIP-backups/20261115T120000Z
+# plan only: nothing has been changed
+REPAIR	tier	full	-
+BACKUP	snapshot	network	network-before.txt
+BACKUP	file	/Library/Preferences/SystemConfiguration/preferences.plist	system-configuration/preferences.plist
+BACKUP	file	/Library/Preferences/SystemConfiguration/NetworkInterfaces.plist	system-configuration/NetworkInterfaces.plist
+BACKUP	file	/Library/Preferences/SystemConfiguration/com.apple.network.identification.plist	system-configuration/com.apple.network.identification.plist
+BACKUP	file	/Library/Preferences/SystemConfiguration/com.apple.airport.preferences.plist	system-configuration/com.apple.airport.preferences.plist
+BACKUP	manifest	SHA256SUMS	system-configuration/SHA256SUMS
+RESET	move	/Library/Preferences/SystemConfiguration/preferences.plist	size=62
+RESET	move	/Library/Preferences/SystemConfiguration/NetworkInterfaces.plist	size=35
+RESET	move	/Library/Preferences/SystemConfiguration/com.apple.network.identification.plist	size=38
+RESET	move	/Library/Preferences/SystemConfiguration/com.apple.airport.preferences.plist	size=36
+NOTE	info	reset	after the next restart macOS rebuilds all network services, static IP settings, Locations and the service order from scratch
+NOTE	info	reset	Wi-Fi networks may need to be rejoined
+NOTE	info	reset	the running network keeps working until you restart the Mac yourself; this script never restarts it
+# summary: backup=6 move=4 absent=0 skip=0
