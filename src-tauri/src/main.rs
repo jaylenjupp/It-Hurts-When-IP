@@ -99,6 +99,16 @@ fn set_static_ip(
     platform::set_static_ip(interface, ip, subnet, gateway)
 }
 
+/// Whether the privileged helper is installed, running, reachable from this
+/// account and the same version as the app. Read-only; release builds ping
+/// the helper (2 s timeout), debug builds never contact it.
+#[tauri::command]
+async fn get_helper_status() -> Result<platform::HelperStatus, String> {
+    tauri::async_runtime::spawn_blocking(platform::get_helper_status)
+        .await
+        .map_err(|e| format!("The helper status could not be checked: {}", e))
+}
+
 #[tauri::command]
 fn get_quick_sets(app: tauri::AppHandle) -> serde_json::Value {
     let config = load_config(&app);
@@ -281,6 +291,7 @@ fn main() {
             get_ip_info,
             set_dhcp,
             set_static_ip,
+            get_helper_status,
             get_quick_sets,
             save_quick_set,
             save_last_interface,

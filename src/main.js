@@ -32,6 +32,48 @@ const currentSubnetLabel = document.getElementById("current-subnet-label");
 const currentGatewayLabel = document.getElementById("current-gateway-label");
 const currentDhcpLabel = document.getElementById("current-dhcp-label");
 
+// --- Helper status banner ---
+// One line at the top of the window when the privileged helper is missing,
+// not running, out of date, a different version, or not usable from this
+// account. Checked at launch and after a failed write; never polled. The
+// quick-set buttons stay usable whatever it says: a write's own error is the
+// truth.
+
+const helperBanner = document.getElementById("helper-banner");
+let helperCheckInFlight = false;
+
+function renderHelperBanner(status) {
+  const state = status && status.state;
+  const show = state && state !== "ok" && status.message;
+  helperBanner.textContent = show ? status.message : "";
+  helperBanner.classList.toggle("hidden", !show);
+  helperBanner.classList.toggle("helper-banner--info", state === "dev_build");
+  helperBanner.classList.toggle("helper-banner--warn", Boolean(show) && state !== "dev_build");
+  helperBanner.dataset.state = state || "";
+}
+
+// At most one check at a time; a failed check leaves the banner as it was.
+async function refreshHelperBanner() {
+  if (helperCheckInFlight) return;
+  helperCheckInFlight = true;
+  try {
+    renderHelperBanner(await invoke("get_helper_status"));
+  } catch (e) {
+    console.warn("[helper status check failed]", e);
+  } finally {
+    helperCheckInFlight = false;
+  }
+}
+
+// Show the write's own error first (full text), then re-check the helper in
+// the background without waiting for it.
+function reportWriteError(error) {
+  statusBar.textContent = "Error: " + error;
+  refreshHelperBanner();
+}
+
+document.addEventListener("DOMContentLoaded", () => refreshHelperBanner());
+
 let previousIpInfo = null;
 let quickSet1 = null;
 let quickSet2 = null;
@@ -235,7 +277,7 @@ document.getElementById("set-dhcp").addEventListener("click", async () => {
     }, 1000);
 
   } catch (error) {
-    statusBar.textContent = "Error: " + error;
+    reportWriteError(error);
   }
 });
 
@@ -266,7 +308,7 @@ document.getElementById("quick-set-1").addEventListener("click", async (e) => {
     );
 
   } catch (error) {
-    statusBar.textContent = "Error: " + error;
+    reportWriteError(error);
   }
 });
 
@@ -297,7 +339,7 @@ document.getElementById("quick-set-2").addEventListener("click", async (e) => {
     );
     
   } catch (error) {
-    statusBar.textContent = "Error: " + error;
+    reportWriteError(error);
   }
 });
 
@@ -327,7 +369,7 @@ document.getElementById("quick-set-3").addEventListener("click", async (e) => {
     );
     
   } catch (error) {
-    statusBar.textContent = "Error: " + error;
+    reportWriteError(error);
   }
 });
 
@@ -357,7 +399,7 @@ document.getElementById("quick-set-4").addEventListener("click", async (e) => {
     );
     
   } catch (error) {
-    statusBar.textContent = "Error: " + error;
+    reportWriteError(error);
   }
 });
 
@@ -386,7 +428,7 @@ document.getElementById("prev-ip").addEventListener("click", async () => {
     );
 
   } catch (error) {
-    statusBar.textContent = "Error: " + error;
+    reportWriteError(error);
   }
 });
 
@@ -710,7 +752,7 @@ document.getElementById("manual-apply").addEventListener("click", async () => {
     );
 
   } catch (error) {
-    statusBar.textContent = "Error: " + error;
+    reportWriteError(error);
   }
 });
 

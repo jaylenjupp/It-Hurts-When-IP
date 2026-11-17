@@ -223,6 +223,35 @@ button:active {
   background-color: #0a84ff66;
 }
 
+/* Helper status banner: one calm line at the top of the main window. */
+.helper-banner {
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px 12px;
+  border-radius: var(--ihw-radius);
+  border: 1px solid var(--ihw-border);
+  background: var(--ihw-surface);
+  color: var(--ihw-fg);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.helper-banner.hidden {
+  display: none;
+}
+
+.helper-banner--warn {
+  border-color: var(--ihw-warn);
+  border-left-width: 4px;
+}
+
+/* Development builds: small neutral note, not a warning. */
+.helper-banner--info {
+  font-size: 11px;
+  padding: 4px 10px;
+  color: var(--ihw-muted);
+}
+
 .status-bar {
   font-size: 11px;
   color: #666;

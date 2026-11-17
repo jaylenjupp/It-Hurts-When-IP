@@ -6,11 +6,14 @@
 // Reads go through a `CommandRunner` with argv only (no shell) and the pure
 // parsers in `macos/parse.rs`.
 //
-// The helper socket code is compiled into release builds only. Debug and test
+// Helper protocol v2 (requests, replies, status banner) lives in
+// `macos/helper.rs`. The helper socket code is compiled into release builds
+// only. Debug and test
 // builds contain no socket code at all: their writes go to the program named
 // by IHWIP_NETWORKSETUP (the fake) or are refused. The build host runs a real
 // root helper, so a dev build must never be able to reach it.
 
+mod helper;
 mod parse;
 mod rescue;
 
@@ -20,13 +23,7 @@ use parse::IpInfo;
 // In-app uninstall through the bundled rescue script (no helper involved).
 pub use rescue::{rescue_plan, rescue_uninstall, RescuePlan, RescueRun};
 
-#[cfg(not(any(debug_assertions, test)))]
-use std::io::{BufRead, BufReader, Write};
-#[cfg(not(any(debug_assertions, test)))]
-use std::os::unix::net::UnixStream;
-
-#[cfg(not(any(debug_assertions, test)))]
-const HELPER_SOCKET: &str = "/var/run/com.ithurtswhenip.helper.sock";
+pub use helper::HelperStatus;
 
 const SYSTEM_NETWORKSETUP: &str = "/usr/sbin/networksetup";
 
@@ -83,6 +80,31 @@ pub fn set_static_ip(
         &subnet,
         &gateway,
     )
+}
+
+/// Banner status for the privileged helper. Debug and test builds never
+/// contact the helper and always report `dev_build`; release builds check the
+/// installed files (read-only), connect and ping with a 2 s timeout.
+#[cfg(any(debug_assertions, test))]
+pub fn get_helper_status() -> HelperStatus {
+    helper::dev_build_status(networksetup_override().is_some())
+}
+
+#[cfg(not(any(debug_assertions, test)))]
+pub fn get_helper_status() -> HelperStatus {
+    use std::path::Path;
+    let files_present =
+        Path::new(helper::HELPER_BINARY).exists() && Path::new(helper::HELPER_PLIST).exists();
+    if !files_present {
+        return helper::classify(
+            false,
+            helper::ConnectOutcome::NoSocket,
+            None,
+            env!("CARGO_PKG_VERSION"),
+        );
+    }
+    let (connect, reply) = helper::socket::probe();
+    helper::classify(true, connect, reply.as_deref(), env!("CARGO_PKG_VERSION"))
 }
 
 // --- App menu ---
@@ -215,10 +237,9 @@ fn set_dhcp_with(
     interface: &str,
 ) -> Result<String, String> {
     match choose_write_route(is_debug, override_path) {
-        WriteRoute::Helper => send_to_helper(serde_json::json!({
-            "cmd": "set_dhcp",
-            "interface": interface
-        })),
+        WriteRoute::Helper => {
+            send_to_helper(helper::v2_request("set_dhcp", &[("interface", interface)]))
+        }
         WriteRoute::Fake(program) => run_write(
             runner,
             program,
@@ -239,13 +260,15 @@ fn set_static_ip_with(
     gateway: &str,
 ) -> Result<String, String> {
     match choose_write_route(is_debug, override_path) {
-        WriteRoute::Helper => send_to_helper(serde_json::json!({
-            "cmd": "set_static_ip",
-            "interface": interface,
-            "ip": ip,
-            "subnet": subnet,
-            "gateway": gateway
-        })),
+        WriteRoute::Helper => send_to_helper(helper::v2_request(
+            "set_static_ip",
+            &[
+                ("interface", interface),
+                ("ip", ip),
+                ("subnet", subnet),
+                ("gateway", gateway),
+            ],
+        )),
         WriteRoute::Fake(program) => run_write(
             runner,
             program,
@@ -256,19 +279,15 @@ fn set_static_ip_with(
     }
 }
 
-/// `-setmanual <svc> <ip> <mask> [<router>]`: the gateway is passed as given
-/// and left out only when empty.
+/// `-setmanual <svc> <ip> <mask> <router>`: the gateway is always passed as
+/// given, `""` when empty (same as the helper).
 fn setmanual_args<'a>(
     interface: &'a str,
     ip: &'a str,
     subnet: &'a str,
     gateway: &'a str,
 ) -> Vec<&'a str> {
-    let mut args = vec!["-setmanual", interface, ip, subnet];
-    if !gateway.is_empty() {
-        args.push(gateway);
-    }
-    args
+    vec!["-setmanual", interface, ip, subnet, gateway]
 }
 
 /// Debug-build write through the runner. Ok/Err strings match what the
@@ -313,32 +332,11 @@ fn send_to_helper(_request: serde_json::Value) -> Result<String, String> {
     Err("the privileged helper is not used in debug or test builds".to_string())
 }
 
+/// Release builds: one v2 request over the helper socket (see
+/// `helper::socket`). The helper's error text is returned in full.
 #[cfg(not(any(debug_assertions, test)))]
 fn send_to_helper(request: serde_json::Value) -> Result<String, String> {
-    let mut stream = UnixStream::connect(HELPER_SOCKET)
-        .map_err(|e| format!("Could not connect to helper: {}", e))?;
-
-    let request_str = format!("{}\n", request);
-    stream
-        .write_all(request_str.as_bytes())
-        .map_err(|e| format!("Failed to send request: {}", e))?;
-
-    let mut reader = BufReader::new(&stream);
-    let mut response = String::new();
-    reader
-        .read_line(&mut response)
-        .map_err(|e| format!("Failed to read response: {}", e))?;
-
-    let parsed: serde_json::Value =
-        serde_json::from_str(response.trim()).map_err(|e| format!("Invalid response: {}", e))?;
-
-    if let Some(ok) = parsed["ok"].as_str() {
-        Ok(ok.to_string())
-    } else if let Some(err) = parsed["error"].as_str() {
-        Err(err.to_string())
-    } else {
-        Err("Unknown response from helper".to_string())
-    }
+    helper::socket::send(request)
 }
 
 #[cfg(test)]
@@ -529,6 +527,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn setmanual_args_always_has_four_operands() {
+        assert_eq!(
+            setmanual_args("LAN", "10.0.0.5", "255.0.0.0", ""),
+            vec!["-setmanual", "LAN", "10.0.0.5", "255.0.0.0", ""]
+        );
+        assert_eq!(
+            setmanual_args("LAN", "10.0.0.5", "255.0.0.0", "10.0.0.1"),
+            vec!["-setmanual", "LAN", "10.0.0.5", "255.0.0.0", "10.0.0.1"]
+        );
+    }
+
+    #[test]
+    fn helper_status_in_test_builds_is_dev_build() {
+        // Test (and debug) builds never contact the helper.
+        assert_eq!(get_helper_status().state, helper::HelperState::DevBuild);
+    }
+
     // --- write routing ---
 
     #[test]
@@ -570,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn debug_static_ip_gateway_omitted_only_when_empty() {
+    fn debug_static_ip_passes_empty_gateway_as_empty_arg() {
         let fake = FakeRunner::new();
         fake.push_ok("").push_ok("");
 
@@ -589,7 +605,7 @@ mod tests {
         let calls = fake.calls();
         assert_eq!(
             calls[0].1,
-            args(&["-setmanual", "LAN", "10.0.0.5", "255.0.0.0"])
+            args(&["-setmanual", "LAN", "10.0.0.5", "255.0.0.0", ""])
         );
         assert_eq!(
             calls[1].1,
