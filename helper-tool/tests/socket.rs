@@ -185,19 +185,166 @@ fn serves_ping_valid_and_hostile_requests_over_the_socket() {
     assert!(meta.file_type().is_socket());
     assert_eq!(meta.mode() & 0xFFF, 0o660, "mode {:o}", meta.mode());
 
-    // The fake saw exactly: list + write for each valid request, list only
-    // for the hostile service, and nothing at all for the rest.
+    // The fake saw exactly: list + the three journal reads + write for each
+    // valid request (first change to each service), list only for the
+    // hostile service, and nothing at all for the rest.
     let log = fs::read_to_string(dir.path("fake/calls.log")).unwrap();
     assert_eq!(
         log,
         "networksetup -listallnetworkservices \n\
+         networksetup -getinfo Dante\\ Primary \n\
+         networksetup -getdnsservers Dante\\ Primary \n\
+         networksetup -getsearchdomains Dante\\ Primary \n\
          networksetup -setmanual Dante\\ Primary 10.1.2.3 255.255.255.0 '' \n\
          networksetup -listallnetworkservices \n\
+         networksetup -getinfo Wi-Fi \n\
+         networksetup -getdnsservers Wi-Fi \n\
+         networksetup -getsearchdomains Wi-Fi \n\
          networksetup -setdhcp Wi-Fi \n\
          networksetup -listallnetworkservices \n"
     );
     let info = fs::read_to_string(dir.path("fake/info/Dante_Primary.txt")).unwrap();
     assert!(info.contains("IP address: 10.1.2.3"), "{}", info);
+}
+
+const WIFI_FIXTURE: &str =
+    include_str!("../../tools/fake-networksetup/fixtures/default/info/Wi-Fi.txt");
+
+#[test]
+fn journals_the_original_then_restores_it_over_the_socket() {
+    let dir = TempDir::new();
+    let sock = dir.path("h.sock");
+    // The journal folder doesn't exist yet: the helper creates it.
+    let journal = dir.path("state/journal.json");
+    let mut cmd = helper_command(&dir);
+    cmd.env("IHWIP_HELPER_JOURNAL", &journal);
+    let mut child = ChildGuard(cmd.spawn().unwrap());
+    wait_until_serving(&mut child, &dir);
+
+    let set = request(
+        &sock,
+        &json!({"v": 2, "cmd": "set_static_ip", "interface": "Wi-Fi",
+                "ip": "10.9.8.7", "subnet": "255.255.255.0", "gateway": "10.9.8.1"}),
+    );
+    assert_eq!(set, json!({"v": 2, "ok": "Set Wi-Fi to 10.9.8.7"}));
+
+    // The original (the fake's fixture text) was recorded before the write.
+    let text = fs::read_to_string(&journal).unwrap();
+    assert!(
+        text.starts_with("{\"schema\":1,\"services\":[\n{\"service\":\"Wi-Fi\",\"recorded_at\":\""),
+        "{}",
+        text
+    );
+    assert!(text.ends_with("}\n]}\n"), "{}", text);
+    let parsed: Value = serde_json::from_str(&text).unwrap();
+    let entry = &parsed["services"][0];
+    assert_eq!(entry["getinfo"], json!(WIFI_FIXTURE));
+    assert_eq!(
+        entry["dns"],
+        json!("There aren't any DNS Servers set on Wi-Fi.\n")
+    );
+    assert_eq!(
+        entry["search"],
+        json!("There aren't any Search Domains set on Wi-Fi.\n")
+    );
+    let recorded_at = entry["recorded_at"].as_str().unwrap().to_string();
+    assert_eq!(recorded_at.len(), 20, "{}", recorded_at);
+    assert!(recorded_at.starts_with("20") && recorded_at.ends_with('Z'));
+    assert_eq!(&recorded_at[10..11], "T");
+    // 0xFFF: permission bits including setuid/setgid/sticky.
+    assert_eq!(
+        fs::symlink_metadata(&journal).unwrap().mode() & 0xFFF,
+        0o644
+    );
+    assert_eq!(
+        fs::symlink_metadata(dir.path("state")).unwrap().mode() & 0xFFF,
+        0o755
+    );
+
+    let status = request(&sock, &json!({"v": 2, "cmd": "journal_status"}));
+    assert_eq!(
+        status,
+        json!({"v": 2, "ok": "journal", "state": "ok",
+               "services": [{"service": "Wi-Fi", "recorded_at": recorded_at}]})
+    );
+
+    let restore = json!({"v": 2, "cmd": "restore_service", "interface": "Wi-Fi"});
+    assert_eq!(
+        request(&sock, &restore),
+        json!({"v": 2, "ok": "Restored Wi-Fi to its original settings (DHCP)."})
+    );
+    assert_eq!(
+        fs::read_to_string(&journal).unwrap(),
+        "{\"schema\":1,\"services\":[]}\n"
+    );
+    assert_eq!(
+        request(&sock, &json!({"v": 2, "cmd": "journal_status"})),
+        json!({"v": 2, "ok": "journal", "state": "ok", "services": []})
+    );
+    assert_eq!(request(&sock, &restore)["code"], json!("not_journaled"));
+
+    // Exactly: record + write, then list + check + write + verify.
+    assert_eq!(
+        fs::read_to_string(dir.path("fake/calls.log")).unwrap(),
+        "networksetup -listallnetworkservices \n\
+         networksetup -getinfo Wi-Fi \n\
+         networksetup -getdnsservers Wi-Fi \n\
+         networksetup -getsearchdomains Wi-Fi \n\
+         networksetup -setmanual Wi-Fi 10.9.8.7 255.255.255.0 10.9.8.1 \n\
+         networksetup -listallnetworkservices \n\
+         networksetup -getinfo Wi-Fi \n\
+         networksetup -setdhcp Wi-Fi \n\
+         networksetup -getinfo Wi-Fi \n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path("fake/info/Wi-Fi.txt")).unwrap(),
+        WIFI_FIXTURE
+    );
+}
+
+#[test]
+fn an_unusable_journal_is_moved_aside_at_start_up() {
+    let dir = TempDir::new();
+    let sock = dir.path("h.sock");
+    fs::write(dir.path("journal.json"), "not json").unwrap();
+    let mut child = ChildGuard(helper_command(&dir).spawn().unwrap());
+    wait_until_serving(&mut child, &dir);
+
+    assert!(!dir.path("journal.json").exists());
+    let moved: Vec<PathBuf> = fs::read_dir(&dir.0)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("journal.unusable-") && n.ends_with("Z.json"))
+        })
+        .collect();
+    assert_eq!(moved.len(), 1, "{:?}", moved);
+    assert_eq!(fs::read_to_string(&moved[0]).unwrap(), "not json");
+    let stderr = stderr_of(&dir);
+    assert!(
+        stderr.contains("was unusable (not valid JSON"),
+        "{}",
+        stderr
+    );
+
+    assert_eq!(
+        request(&sock, &json!({"v": 2, "cmd": "journal_status"})),
+        json!({"v": 2, "ok": "journal", "state": "none", "services": []})
+    );
+    // The helper carries on and records afresh.
+    assert_eq!(
+        request(
+            &sock,
+            &json!({"v": 2, "cmd": "set_dhcp", "interface": "Wi-Fi"})
+        ),
+        json!({"v": 2, "ok": "Set Wi-Fi to DHCP"})
+    );
+    let status = request(&sock, &json!({"v": 2, "cmd": "journal_status"}));
+    assert_eq!(status["state"], json!("ok"));
+    assert_eq!(status["services"][0]["service"], json!("Wi-Fi"));
+    assert_eq!(fs::read_to_string(&moved[0]).unwrap(), "not json");
 }
 
 #[test]
@@ -260,6 +407,18 @@ fn debug_helper_refuses_relative_paths_and_the_real_networksetup() {
     let mut cmd = helper_command(&dir);
     cmd.env("IHWIP_NETWORKSETUP", "/usr/sbin/networksetup");
     assert_refuses(cmd, &dir, "real networksetup");
+}
+
+#[test]
+fn debug_helper_refuses_the_real_journal_folder() {
+    // Refused from the path alone: nothing in that folder is opened or changed.
+    let dir = TempDir::new();
+    let mut cmd = helper_command(&dir);
+    cmd.env(
+        "IHWIP_HELPER_JOURNAL",
+        "/Library/Application Support/com.ithurtswhenip.helper/journal.json",
+    );
+    assert_refuses(cmd, &dir, "real journal folder");
 }
 
 #[test]

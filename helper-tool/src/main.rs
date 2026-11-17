@@ -7,15 +7,21 @@
 //
 // Release builds use fixed paths and never read IHWIP_* environment
 // variables. Debug builds are for tests on the build host only: they refuse
-// to run as root, refuse the real socket and the real networksetup, and need
-// IHWIP_HELPER_SOCKET, IHWIP_HELPER_JOURNAL and IHWIP_NETWORKSETUP.
+// to run as root, refuse the real socket, the real journal folder and the
+// real networksetup, and need IHWIP_HELPER_SOCKET, IHWIP_HELPER_JOURNAL and
+// IHWIP_NETWORKSETUP.
 
 mod error;
+mod getinfo;
+mod journal;
 mod netsetup;
 mod protocol;
 mod runner;
+#[cfg(test)]
+mod testutil;
 mod validate;
 
+use journal::{Clock, SystemClock};
 use protocol::{Ctx, ReadError};
 use runner::SystemRunner;
 use std::fs;
@@ -27,8 +33,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 const RELEASE_SOCKET: &str = "/var/run/com.ithurtswhenip.helper.sock";
-/// Reserved for the change journal (package 2.2).
-#[cfg(not(debug_assertions))]
+/// The change journal (see journal.rs). Debug builds refuse this folder.
 const RELEASE_JOURNAL: &str = "/Library/Application Support/com.ithurtswhenip.helper/journal.json";
 
 /// rw for root and the admin group, nothing for anyone else. Never wider.
@@ -46,7 +51,6 @@ const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct Config {
     socket: PathBuf,
-    /// Not used until the change journal lands (package 2.2).
     journal: PathBuf,
     networksetup: String,
 }
@@ -59,6 +63,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    quarantine_unusable_journal(&config.journal, &SystemClock);
     let listener = match open_socket(&config.socket) {
         Ok(l) => l,
         Err(e) => {
@@ -75,8 +80,29 @@ fn main() -> ExitCode {
         config.networksetup,
         config.journal.display(),
     );
-    serve(&listener, &config.networksetup);
+    serve(&listener, &config);
     ExitCode::SUCCESS
+}
+
+/// Start-up only (owner decision): an unusable journal is renamed aside,
+/// never deleted, and the helper carries on with no journal, so the next
+/// change records fresh originals. If it can't be moved, every write stays
+/// refused (fail closed) until it is fixed.
+fn quarantine_unusable_journal(path: &Path, clock: &dyn Clock) {
+    match journal::quarantine(path, clock.now_secs()) {
+        Ok(None) => {}
+        Ok(Some((moved, why))) => eprintln!(
+            "journal {} was unusable ({}); moved it to {}. Carrying on without a journal.",
+            path.display(),
+            why,
+            moved.display()
+        ),
+        Err(e) => eprintln!(
+            "journal {}: {}. Network changes will be refused until it is fixed.",
+            path.display(),
+            e
+        ),
+    }
 }
 
 // --- Configuration ---
@@ -141,6 +167,7 @@ fn config_from_env(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> Result<C
     let journal = absolute_env(&get, "IHWIP_HELPER_JOURNAL")?;
     let networksetup = absolute_env(&get, "IHWIP_NETWORKSETUP")?;
     check_debug_socket(&socket)?;
+    check_debug_journal(&journal)?;
     check_debug_networksetup(&networksetup)?;
     let networksetup = networksetup
         .to_str()
@@ -187,6 +214,28 @@ fn check_debug_socket(socket: &Path) -> Result<(), String> {
             "IHWIP_HELPER_SOCKET {:?} is (or sits next to) the real helper socket {}. \
              Use a temp dir.",
             socket, RELEASE_SOCKET
+        ));
+    }
+    Ok(())
+}
+
+/// The build host has a real journal folder: a debug build must never read,
+/// write or quarantine anything in it.
+#[cfg(debug_assertions)]
+fn check_debug_journal(journal: &Path) -> Result<(), String> {
+    let release_dir = Path::new(RELEASE_JOURNAL)
+        .parent()
+        .expect("RELEASE_JOURNAL has a folder");
+    let canonical_release = fs::canonicalize(release_dir).ok();
+    let inside = |p: &Path| {
+        p.starts_with(release_dir) || canonical_release.as_ref().is_some_and(|r| p.starts_with(r))
+    };
+    let canonical_parent = journal.parent().and_then(|d| fs::canonicalize(d).ok());
+    if inside(journal) || canonical_parent.as_deref().is_some_and(inside) {
+        return Err(format!(
+            "IHWIP_HELPER_JOURNAL {:?} is inside the real journal folder {}. Use a temp dir.",
+            journal,
+            release_dir.display()
         ));
     }
     Ok(())
@@ -320,12 +369,13 @@ fn secure_socket(path: &Path) -> Result<(), String> {
 
 // --- Serving ---
 
-fn serve(listener: &UnixListener, networksetup: &str) {
+fn serve(listener: &UnixListener, config: &Config) {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let networksetup = networksetup.to_string();
-                std::thread::spawn(move || handle_client(stream, &networksetup));
+                let networksetup = config.networksetup.clone();
+                let journal = config.journal.clone();
+                std::thread::spawn(move || handle_client(stream, &networksetup, &journal));
             }
             Err(e) => eprintln!("connection error: {}", e),
         }
@@ -333,7 +383,7 @@ fn serve(listener: &UnixListener, networksetup: &str) {
 }
 
 /// One request per connection, as in v1.13.1.
-fn handle_client(stream: UnixStream, networksetup: &str) {
+fn handle_client(stream: UnixStream, networksetup: &str, journal: &Path) {
     if let Err(e) = stream
         .set_read_timeout(Some(IO_TIMEOUT))
         .and_then(|_| stream.set_write_timeout(Some(IO_TIMEOUT)))
@@ -346,6 +396,8 @@ fn handle_client(stream: UnixStream, networksetup: &str) {
             let ctx = Ctx {
                 runner: &SystemRunner,
                 networksetup,
+                journal,
+                clock: &SystemClock,
             };
             protocol::handle_line(&line, &ctx)
         }
@@ -463,6 +515,27 @@ mod tests {
                 .unwrap_or_else(|| panic!("{} accepted", socket));
             assert!(err.contains("real helper socket"), "{}", err);
         }
+    }
+
+    #[test]
+    fn debug_config_refuses_the_real_journal_folder() {
+        for journal in [
+            RELEASE_JOURNAL,
+            "/Library/Application Support/com.ithurtswhenip.helper/other.json",
+            "/Library/Application Support/com.ithurtswhenip.helper/sub/journal.json",
+            "/Library/Application Support/com.ithurtswhenip.helper/../com.ithurtswhenip.helper/journal.json",
+        ] {
+            let err = config_from_env(env_of(&with("IHWIP_HELPER_JOURNAL", journal)))
+                .err()
+                .unwrap_or_else(|| panic!("{} accepted", journal));
+            assert!(err.contains("real journal folder"), "{}", err);
+        }
+        // A sibling folder is fine.
+        assert!(config_from_env(env_of(&with(
+            "IHWIP_HELPER_JOURNAL",
+            "/tmp/com.ithurtswhenip.helper/journal.json"
+        )))
+        .is_ok());
     }
 
     #[test]

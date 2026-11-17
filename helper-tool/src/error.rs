@@ -21,6 +21,18 @@ pub enum ErrCode {
     /// networksetup could not be run or reported a failure.
     CommandFailed,
     UnknownCommand,
+    /// The original settings could not be recorded, so nothing was changed.
+    JournalFailed,
+    /// restore_service: the journal can't be read or parsed.
+    JournalUnusable,
+    /// restore_service: no original settings are recorded for the service.
+    NotJournaled,
+    /// restore_service: the recorded original is neither DHCP nor Manual, or
+    /// its recorded addresses don't pass validation.
+    UnsupportedOriginal,
+    /// restore_service: the write ran but the service doesn't read back as
+    /// its original settings.
+    VerifyFailed,
 }
 
 impl ErrCode {
@@ -36,6 +48,11 @@ impl ErrCode {
             ErrCode::InvalidGateway => "invalid_gateway",
             ErrCode::CommandFailed => "command_failed",
             ErrCode::UnknownCommand => "unknown_command",
+            ErrCode::JournalFailed => "journal_failed",
+            ErrCode::JournalUnusable => "journal_unusable",
+            ErrCode::NotJournaled => "not_journaled",
+            ErrCode::UnsupportedOriginal => "unsupported_original",
+            ErrCode::VerifyFailed => "verify_failed",
         }
     }
 }

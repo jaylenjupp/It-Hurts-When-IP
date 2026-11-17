@@ -1489,6 +1489,52 @@ test_journal_plan() {
     end
 }
 
+# A journal byte-for-byte as the helper writes it. The helper's unit test
+# recorded_journal_matches_the_shared_fixture pins the same file, so this
+# checks the helper's writer against this script's reader.
+HELPER_JOURNAL="$HERE/fixtures/journal-from-helper.json"
+
+test_helper_journal_plan() {
+    local cafe i want
+    cafe="Caf"$'\303\251'" Ethernet"
+    begin "23b journal written by the helper: --plan shows exactly its 5 services; the parser reads them byte-exact"
+    [ -f "$HELPER_JOURNAL" ] || abort "missing $HELPER_JOURNAL"
+    tree_full
+    fx_copy
+    fx_service 'Show "A", B' "DHCP Configuration" "IP address: 192.168.50.7" "Subnet mask: 255.255.255.0" \
+        "Router: 192.168.50.1" "Client ID: " "IPv6: Automatic" "Ethernet Address: 00:11:22:33:44:88"
+    cp "$HELPER_JOURNAL" "$ROOT/$JOURNAL_REL" || abort "cannot install $HELPER_JOURNAL"
+    tree_sum "$ROOT" >"$T/before.sum"
+    run_rescue --plan
+    assert_rc 0
+    err_empty
+    out_has "NOTE${TAB}info${TAB}journal${TAB}found: 5 service(s) recorded; restore covers IPv4 settings only (DNS servers and search domains are not restored by this version)"
+    out_lacks "not used ("
+    out_count 5 "NETWORK${TAB}journal${TAB}"
+    jsel_count 5 no
+    out_has "NETWORK${TAB}journal${TAB}Dante Primary${TAB}original=manual/192.168.10.21/255.255.255.0/- current=manual/192.168.10.21/255.255.255.0/- selected=no"
+    out_has "NETWORK${TAB}journal${TAB}Show \"A\", B${TAB}original=dhcp/192.168.50.7/255.255.255.0/192.168.50.1 current=dhcp/192.168.50.7/255.255.255.0/192.168.50.1 selected=no"
+    out_has "NETWORK${TAB}journal${TAB}$cafe${TAB}original=manual/10.50.0.5/255.255.0.0/10.50.0.1 current=missing/-/-/- selected=no"
+    out_has "NETWORK${TAB}journal${TAB}Wi-Fi${TAB}original=dhcp/10.20.30.40/255.255.252.0/10.20.28.1 current=dhcp/10.20.30.40/255.255.252.0/10.20.28.1 selected=no"
+    out_has "NETWORK${TAB}journal${TAB}USB 10/100/1000 LAN${TAB}original=dhcp/192.168.1.42/255.255.255.0/192.168.1.1 current=dhcp/192.168.1.42/255.255.255.0/192.168.1.1 selected=no"
+    tree_sum "$ROOT" >"$T/after.sum"
+    same_file "$T/before.sum" "$T/after.sum"
+    no_mutating_calls
+    ns_read_only
+    # The parser on the same file: J_STATE ok, names and a multi-line getinfo exact.
+    cp "$HELPER_JOURNAL" "$T/j.json" || abort "cannot copy $HELPER_JOURNAL"
+    jcase helper-journal "STATE=ok N=5 REASON="
+    i=0
+    for want in "Dante Primary" 'Show "A", B' "$cafe" "Wi-Fi" "USB 10/100/1000 LAN"; do
+        printf '%s' "$want" >"$T/want.svc"
+        same_file "$T/j.svc.$i" "$T/want.svc"
+        i=$((i + 1))
+    done
+    printf 'Manual Configuration\nIP address: 192.168.10.21\nSubnet mask: 255.255.255.0\nRouter: \nIPv6: Automatic\nIPv6 IP address: none\nIPv6 Router: none\nEthernet Address: 00:11:22:33:44:66\n' >"$T/want.info"
+    same_file "$T/j.info.0" "$T/want.info"
+    end
+}
+
 test_journal_restore() {
     begin "24  --network restore-journal: exact argv per service, quoted name intact, missing service skipped (exit 1)"
     tree_journal
@@ -2104,6 +2150,7 @@ test_no_journal_plan
 test_dhcp_pick
 test_bad_picks
 test_journal_plan
+test_helper_journal_plan
 test_journal_restore
 test_journal_overlap
 test_journal_fallback
