@@ -85,8 +85,41 @@ TODO(verify): `sudo bash` runs a downloaded (quarantined) `.command` without a G
 ## Per-phase test lists
 Claude adds a "what to test" list to each phase report and to the draft release notes. Tick through it and reply with results; Claude records them in `docs/PROGRESS.md`.
 
+### Phase 2 — helper hardening + change journal
+Every command runs on **Jay's travel Mac, Terminal**. Paste each output into the session.
+
+1. **Install over the existing version** (see *Installing*). Open the app: there should be no banner above "Network Interface". If a banner shows, note its exact text.
+2. **Changes still work:** apply each quick set, then **Set DHCP**, then one quick set that has **no gateway**. After the no-gateway one:
+   ```bash
+   networksetup -getinfo "<service>"
+   ```
+   shows the quick set's IP and an empty `Router:` line.
+3. **Socket is admin-only:**
+   ```bash
+   ls -l /var/run/com.ithurtswhenip.helper.sock
+   ```
+   Expect `srw-rw----  1 root  admin …`.
+4. **Journal exists** (after at least one change in step 2):
+   ```bash
+   ls -ld "/Library/Application Support/com.ithurtswhenip.helper" "/Library/Application Support/com.ithurtswhenip.helper/journal.json"
+   ```
+   Expect `drwxr-xr-x … root …` for the folder and `-rw-r--r-- … root …` for `journal.json`.
+5. **The rescue plan sees the journal** (changes nothing):
+   ```bash
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command --plan
+   ```
+   Each service you changed shows as a `NETWORK journal <service> original=… current=…` line.
+6. **Optional — Standard (non-admin) account**, if the Mac has one: log in as it and open the app. The banner says the account isn't an Administrator, and applying a quick set fails with a clear error.
+7. **Phase 1 carry-over (not tested yet):** in the app, **Uninstall…** → follow it through → no files left and the network still works. Check with the steps under *Uninstalling (rescue script)* → "Afterwards, check and report" above. Reinstall the pkg afterwards if you want to keep testing.
+8. **macOS version** (sets the minimum macOS the builds must support):
+   ```bash
+   sw_vers
+   ```
+
 ## If the network is broken — without the app
 Work down this list; stop when it works. These are standard macOS commands, nothing app-specific.
+
+Note (from Phase 2 on): the helper records each service's original settings before it first changes it, in `/Library/Application Support/com.ithurtswhenip.helper/journal.json` (read it with `sudo cat "<that path>"`). `sudo bash ~/Downloads/ithurtswhenip-rescue.command --uninstall --network restore-journal` puts them back (and removes the app; try `--plan --network restore-journal` first, it changes nothing).
 
 1. **Stop the helper so nothing else changes:**
    ```bash

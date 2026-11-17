@@ -1594,6 +1594,7 @@ mod tests {
 
     /// The public command's path in a debug build: osascript is never run.
     #[cfg(debug_assertions)]
+    #[allow(clippy::assertions_on_constants)] // guards the cfg-dependent const on purpose
     #[test]
     fn public_debug_path_never_runs_osascript() {
         assert!(!EXECUTE_OSASCRIPT);

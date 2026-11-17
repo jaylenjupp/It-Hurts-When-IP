@@ -22,6 +22,8 @@ If your work involves regularly moving a machine between networks — swapping b
 
 **It Hurts When IP** keeps your network configurations saved and lets you switch between them in one click. The actual network changes are applied by a small privileged helper that runs in the background, so you authenticate **once** at install time and never get a prompt for routine switches afterward.
 
+On macOS the helper only accepts requests from administrator accounts. Before it first changes a network service, it records that service's original settings, so they can be put back later (the uninstaller offers to).
+
 It runs on both **macOS** and **Windows** from this single repository. macOS is the original, more mature platform; Windows support was added more recently.
 
 ## Install

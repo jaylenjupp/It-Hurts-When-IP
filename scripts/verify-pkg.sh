@@ -293,6 +293,96 @@ if [[ "${DAEMON_PROGRAM}" == "${HELPER_INSTALL_PATH}" ]]; then
 else
     fail "LaunchDaemon program is ${HELPER_INSTALL_PATH} — got '${DAEMON_PROGRAM}'"
 fi
+# Umask 63 (octal 077): files the helper creates (the socket between bind()
+# and its chown/chmod) start owner-only.
+DAEMON_UMASK="$(plist_get Umask "${DAEMON_PLIST}" || true)"
+if [[ "${DAEMON_UMASK}" == "63" ]]; then
+    pass "LaunchDaemon Umask is 63 (octal 077)"
+else
+    fail "LaunchDaemon Umask is 63 (octal 077) — got '${DAEMON_UMASK:-<not set>}'"
+fi
+
+# --- Phase 2 hardening, read from the binaries' bytes ------------------------------------------------
+# All of these grep the raw Mach-O bytes (grep -a), which is what `strings`
+# shows, without strings' minimum-length and section rules.
+#
+# Present-checks run per arch slice: LLVM may turn a short string literal into
+# immediate compares on one arch and keep it as data on the other (seen:
+# "unsupported_version" is in the arm64 slice but not the x86_64 one), so the
+# markers below are ones both slices keep as data. Absent-checks read the
+# whole (fat) file, which covers every slice.
+
+# slices_contain <label> <file> <needle>…: PASS if every arch slice of <file>
+# contains every needle as a literal byte string.
+slices_contain() {
+    local label="$1" exe="$2" archs arch slice needle missing=""
+    shift 2
+    if [[ ! -f "${exe}" ]]; then
+        fail "${label} — not found: ${exe#"${PAYLOAD}"/}"
+        return
+    fi
+    archs="$(lipo -archs "${exe}" 2>/dev/null)" || archs=""
+    if [[ -z "${archs}" ]]; then
+        fail "${label} — lipo cannot read ${exe#"${PAYLOAD}"/}"
+        return
+    fi
+    for arch in ${archs}; do
+        slice="${WORK}/slice-$(basename "${exe}")-${arch}"
+        lipo "${exe}" -thin "${arch}" -output "${slice}" 2>/dev/null || slice="${exe}"
+        for needle in "$@"; do
+            LC_ALL=C grep -a -q -F -- "${needle}" "${slice}" || missing="${missing} ${arch}:${needle}"
+        done
+    done
+    if [[ -z "${missing}" ]]; then
+        pass "${label} (slices: ${archs})"
+    else
+        fail "${label} — missing:${missing}"
+    fi
+}
+
+# lacks <label> <file> <grep -E pattern>: PASS if no byte run in <file> matches.
+lacks() {
+    local label="$1" exe="$2" pattern="$3" hits
+    if [[ ! -f "${exe}" ]]; then
+        fail "${label} — not found: ${exe#"${PAYLOAD}"/}"
+        return
+    fi
+    hits="$(LC_ALL=C grep -a -o -E -- "${pattern}" "${exe}" | LC_ALL=C tr -c '[:print:]\n' '?' | awk 'NR <= 3')" || true
+    if [[ -z "${hits}" ]]; then
+        pass "${label}"
+    else
+        fail "${label} — found: $(join_lines "${hits}")"
+    fi
+}
+
+# The v1.13.1 helper ran `Command::new("chmod").args(["777", socket])`; its
+# binary holds the bytes "chmod777". The Phase 2 helper sets the socket mode
+# with the chmod(2) syscall instead, so the word "chmod" legitimately stays in
+# the binary (libc import symbols _chmod/_fchmod and the error text "after
+# chmod, expected") and grepping for it would always fail. What is meaningful:
+#   - no "777" token: a 777 not inside a longer digit run. Rust's std carries a
+#     digit table "000102…99" that contains 777 between digits, so digits on
+#     either side are excluded. This catches the old helper.
+#   - no "/bin/chmod" path: catches running chmod by absolute path.
+# Not caught: a new Command::new("chmod") with some other mode. Rust packs
+# literals back to back, so a bare "chmod" program name can't be told apart
+# from the error text by bytes alone; code review covers that case.
+lacks "helper binary has no \"777\" token (old chmod 777 socket)" "${HELPER}" '(^|[^0-9])777([^0-9]|$)'
+lacks "helper binary has no /bin/chmod path" "${HELPER}" '/bin/chmod'
+# Protocol-2 build (2.1/2.2), not the v1.13.1 helper: these names are only in
+# the v2 command set and error codes.
+slices_contain "helper binary is a protocol-2 build (journal_status, restore_service, journal_failed)" \
+    "${HELPER}" journal_status restore_service journal_failed
+# Release builds never read the IHWIP_* test overrides (they are behind
+# #[cfg(debug_assertions)]; a debug helper contains IHWIP_HELPER_SOCKET etc.).
+lacks "helper binary has no IHWIP_ strings (release build, no env overrides)" "${HELPER}" 'IHWIP_[A-Za-z0-9_]*'
+# The app legitimately carries other IHWIP_ markers (IHWIP_BUILD_STAMP and the
+# rescue runner's IHWIP_EXIT / IHWIP_OSA_ERROR), so only the override is checked.
+if [[ -n "${APP_EXEC}" ]]; then
+    lacks "app executable has no IHWIP_NETWORKSETUP (release build, no fake override)" "${APP_EXEC}" 'IHWIP_NETWORKSETUP'
+else
+    fail "app executable has no IHWIP_NETWORKSETUP — CFBundleExecutable missing from Info.plist"
+fi
 
 # --- App identity ------------------------------------------------------------------------------------
 APP_VERSION="$(plist_get CFBundleShortVersionString "${INFO_PLIST}" || true)"
