@@ -872,7 +872,7 @@ function rescueCanClose() {
 }
 
 function openRescue() {
-  if (rescue.state !== "closed") return;
+  if (rescue.state !== "closed" || repair.state !== "closed") return; // one flow at a time
   rescue.plan = null;
   rescue.picks = new Set();
   rescue.restore = false;
@@ -1393,6 +1393,644 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || rescue.state === "closed") return;
   e.preventDefault();
   if (rescueCanClose()) closeRescue();
+});
+
+// --- Repair network modal (rescue script --repair) ---
+//
+// Opened from the app menu ("Repair Network…") and the temporary button by
+// the signature; never while the uninstall modal is open (and the other way
+// round). Flow: choose a tier -> the script's read-only plan -> confirm (a
+// full reset needs RESET typed) -> macOS password prompt -> result. Debug
+// builds never run it (enforced in Rust): they return the command. The app
+// never restarts the Mac: it only says when a restart is needed.
+//
+// States: closed · choose · loading · pick · plan · running · done · refused · error · debug.
+// A dismissed password prompt goes back to the plan with a calm banner.
+
+const REPAIR_RESET_WORD = "RESET";
+
+const REPAIR_TIERS = [
+  {
+    tier: "soft",
+    title: "Soft refresh",
+    text:
+      "Clears the Mac's DNS cache and asks adapters that get their address automatically (DHCP) for a fresh one. Manual (static) settings are not touched. Safe to try first.",
+  },
+  {
+    tier: "service",
+    title: "Reset one service",
+    text:
+      "Pick one adapter. Its IP settings go back to automatic (DHCP), its DNS servers and search domains are cleared, and it is turned off and on again. A static IP on it is removed. Its current settings are backed up first.",
+  },
+  {
+    tier: "full",
+    title: "Full network reset",
+    text:
+      "Last resort: use only when nothing else works. Moves the Mac's network settings files to a backup so macOS rebuilds them after you restart. Every adapter, static IP, Location and service order starts from scratch, and Wi-Fi networks must be rejoined.",
+  },
+];
+
+const repair = {
+  state: "closed",
+  tier: "",
+  service: "",
+  services: null, // the soft plan's service list, for the "Reset one service" picker
+  plan: null,
+  typed: "",
+  run: null,
+  message: "",
+  banner: "",
+  canGoBack: false,
+  focusKey: "",
+  seq: 0,
+  overlay: document.getElementById("repair-modal-overlay"),
+  modal: document.getElementById("repair-modal"),
+  title: document.getElementById("repair-modal-title"),
+  body: document.getElementById("repair-modal-body"),
+  buttons: document.getElementById("repair-modal-buttons"),
+};
+
+function repairCanClose() {
+  return repair.state !== "closed" && repair.state !== "running";
+}
+
+function openRepair() {
+  if (repair.state !== "closed" || rescue.state !== "closed") return;
+  repairReset();
+  repair.overlay.classList.remove("hidden");
+  repair.state = "choose";
+  renderRepair();
+}
+
+function repairReset() {
+  repair.tier = "";
+  repair.service = "";
+  repair.services = null;
+  repair.plan = null;
+  repair.typed = "";
+  repair.run = null;
+  repair.message = "";
+  repair.banner = "";
+  repair.canGoBack = false;
+  repair.focusKey = "";
+}
+
+function closeRepair() {
+  if (!repairCanClose()) return;
+  repair.seq++; // drop any plan still on its way
+  repair.typed = "";
+  repair.state = "closed";
+  repair.overlay.classList.add("hidden");
+  repair.modal.dataset.state = "closed";
+}
+
+// Back to the three tiers; forgets the plan and the typed word.
+function repairBackToChoose() {
+  repair.seq++;
+  const tier = repair.tier;
+  repairReset();
+  repair.focusKey = "tier:" + tier;
+  document.activeElement?.blur();
+  repair.state = "choose";
+  renderRepair();
+}
+
+async function chooseRepairTier(tier) {
+  repair.tier = tier;
+  repair.service = "";
+  repair.plan = null;
+  repair.typed = "";
+  repair.banner = "";
+  repair.focusKey = "";
+  if (tier === "service") {
+    await loadRepairServices();
+  } else {
+    await loadRepairPlan();
+  }
+}
+
+// The services the script itself reports (its read-only soft plan), so the
+// picker only offers names the script accepts. Preselects the main window's
+// interface when it can be reset.
+async function loadRepairServices() {
+  const mySeq = ++repair.seq;
+  repair.state = "loading";
+  renderRepair();
+  let plan;
+  try {
+    plan = await invoke("repair_plan", { tier: "soft", service: null });
+  } catch (error) {
+    if (mySeq !== repair.seq) return;
+    repair.state = "error";
+    repair.message = String(error);
+    repair.canGoBack = true;
+    renderRepair();
+    return;
+  }
+  if (mySeq !== repair.seq) return;
+  if (plan.refused) {
+    repair.state = "refused";
+    repair.message = plan.refused;
+    renderRepair();
+    return;
+  }
+  repair.services = plan.services;
+  const current = document.getElementById("interface-select")?.value || "";
+  const offered = plan.services.filter((s) => s.resettable).map((s) => s.name);
+  if (offered.includes(current)) {
+    repair.service = current;
+    loadRepairPlan();
+    return;
+  }
+  repair.state = "pick";
+  repair.focusKey = "service-pick";
+  renderRepair();
+}
+
+function pickRepairService(name) {
+  repair.service = name;
+  repair.plan = null;
+  repair.banner = "";
+  repair.focusKey = "service-pick";
+  if (name) loadRepairPlan();
+  else {
+    repair.state = "pick";
+    renderRepair();
+  }
+}
+
+// Fetches a fresh plan for the chosen tier (and service). Stale replies are dropped.
+async function loadRepairPlan(banner = "") {
+  const mySeq = ++repair.seq;
+  repair.banner = banner;
+  repair.state = "loading";
+  renderRepair();
+  let plan;
+  try {
+    plan = await invoke("repair_plan", {
+      tier: repair.tier,
+      service: repair.tier === "service" ? repair.service : null,
+    });
+  } catch (error) {
+    if (mySeq !== repair.seq) return;
+    repair.state = "error";
+    repair.message = String(error);
+    repair.canGoBack = true;
+    renderRepair();
+    return;
+  }
+  if (mySeq !== repair.seq) return;
+  repair.plan = plan;
+  if (plan.refused) {
+    repair.state = "refused";
+    repair.message = plan.refused;
+  } else {
+    repair.state = "plan";
+  }
+  renderRepair();
+}
+
+function repairConfirmReady() {
+  return repair.tier !== "full" || repair.typed === REPAIR_RESET_WORD;
+}
+
+async function confirmRepair() {
+  if (repair.state !== "plan" || !repairConfirmReady()) return;
+  const confirm = repair.tier === "full" ? repair.typed : "";
+  repair.state = "running";
+  repair.banner = "";
+  repair.focusKey = "cancel"; // never land back on the confirm button after a cancel
+  document.activeElement?.blur();
+  renderRepair();
+
+  let run;
+  try {
+    run = await invoke("repair_run", {
+      tier: repair.tier,
+      service: repair.tier === "service" ? repair.service : null,
+      confirm,
+    });
+  } catch (error) {
+    repair.typed = "";
+    repair.state = "error";
+    repair.message = String(error);
+    repair.canGoBack = true;
+    renderRepair();
+    return;
+  }
+
+  repair.typed = "";
+  repair.run = run;
+  switch (run.outcome) {
+    case "cancelled":
+      loadRepairPlan("Cancelled, nothing changed.");
+      return;
+    case "not_executed":
+      repair.state = "debug";
+      break;
+    case "refused":
+      repair.state = "refused";
+      repair.message = run.messages.join(" ") || "The rescue script refused to run.";
+      break;
+    case "ok":
+    case "partial":
+      repair.state = "done";
+      break;
+    default:
+      repair.state = "error";
+      repair.message = run.messages.join(" ") || "The repair could not run.";
+      repair.canGoBack = true;
+  }
+  renderRepair();
+}
+
+// --- Repair modal: text for plan records and result lines ---
+
+function repairFileName(path) {
+  return String(path).split("/").pop();
+}
+
+// "now=<m>/<ip>/<mask>/<router> …" -> the view part.
+function repairNowView(detail) {
+  const m = /(?:^|\s)now=(\S+)/.exec(detail || "");
+  return m ? m[1] : "";
+}
+
+function repairAddressText(view) {
+  const [mode, ip, mask, router] = String(view).split("/");
+  const where = ip && ip !== "-" ? `${ip} / ${mask}` + (router && router !== "-" ? `, router ${router}` : "") : "no address";
+  if (mode === "dhcp") return `automatic (DHCP), ${where}`;
+  if (mode === "manual") return `manual (static) ${where}`;
+  return mode || "unknown";
+}
+
+function repairWas(detail) {
+  const v = String(detail || "").replace(/^was=/, "");
+  return v === "-" || v === "" ? "none" : v.split(",").join(", ");
+}
+
+// Plan records and OK/FAILED lines (same TYPE KIND SUBJECT DETAIL fields).
+function repairActionText(kind, sub, subject, detail) {
+  const k = String(kind).toLowerCase();
+  if (k === "repair") {
+    switch (sub) {
+      case "flushcache":
+        return `Clear the DNS cache (${detail})`;
+      case "hup":
+        return `Restart the DNS responder (${detail})`;
+      case "renew": {
+        const dev = /device=(\S+)/.exec(detail || "");
+        return `${subject}: ask for a fresh address (now ${repairAddressText(repairNowView(detail))}${dev ? ", device " + dev[1] : ""})`;
+      }
+      case "leave":
+        return `${subject}: ${detail}`;
+      case "setdhcp":
+        return `${subject}: switch to automatic (DHCP) (was ${repairAddressText(String(detail).replace(/^was=/, ""))})`;
+      case "cleardns":
+        return `${subject}: clear DNS servers (was ${repairWas(detail)})`;
+      case "clearsearch":
+        return `${subject}: clear search domains (was ${repairWas(detail)})`;
+      case "disable":
+        return `${subject}: turn off`;
+      case "enable":
+        return `${subject}: turn on again`;
+      default:
+        return `${subject}: ${detail}`;
+    }
+  }
+  if (k === "backup") {
+    if (sub === "snapshot") return `Save a snapshot of the settings (${detail})`;
+    if (sub === "file") return `Back up ${subject}`;
+    if (sub === "manifest") return `Write the backup checksums (${detail})`;
+    if (sub === "check") return `Check the backup copies (${detail})`;
+    return `Back up ${subject}`;
+  }
+  if (k === "reset") {
+    if (sub === "move") return `Move ${repairFileName(subject)} to the backup`;
+    return `${repairFileName(subject)}: ${detail}`;
+  }
+  return [subject, detail].filter((x) => x && x !== "-").join(": ");
+}
+
+function repairStepText(s) {
+  if (s.kind === "VERIFY") {
+    const sep = s.subject.indexOf(":");
+    const what = sep > 0 ? s.subject.slice(0, sep) : "";
+    const name = sep > 0 ? s.subject.slice(sep + 1) : s.subject;
+    if (what === "repair") {
+      const view = repairNowView(s.detail);
+      if (s.status === "verify_ok") return `${name}: working, ${repairAddressText(view)}`;
+      if (s.status === "verify_warn") {
+        const linkLocal = /link-local/.test(s.detail) ? " (only a self-assigned 169.254 address)" : "";
+        return `${name}: No address yet${linkLocal} — check cable/switch/DHCP server`;
+      }
+      return `${name}: not as expected (${s.detail})`;
+    }
+    if (what === "reset") {
+      if (s.status === "verify_ok") return `${repairFileName(name)}: moved, backup copy checked`;
+      return `${repairFileName(name)}: ${s.detail || "check failed"}`;
+    }
+    return "Checked " + s.subject + (s.detail ? ` (${s.detail})` : "");
+  }
+  let text = repairActionText(s.kind, s.sub_kind, s.subject, s.detail);
+  if (s.reason) text += ` — failed: ${s.reason}`;
+  return text;
+}
+
+// --- Repair modal: rendering ---
+
+function renderRepairChoose(body) {
+  body.appendChild(rescueEl("p", "", "Choose how much to repair. You see the exact plan before anything changes."));
+  REPAIR_TIERS.forEach((t) => {
+    const card = rescueEl("button", "repair-tier" + (t.tier === "full" ? " repair-tier-danger" : ""));
+    card.type = "button";
+    card.dataset.key = "tier:" + t.tier;
+    card.appendChild(rescueEl("span", "repair-tier-title", t.title));
+    card.appendChild(rescueEl("span", "repair-tier-text", t.text));
+    card.addEventListener("click", () => chooseRepairTier(t.tier));
+    body.appendChild(card);
+  });
+}
+
+function renderRepairPicker(body, disabled) {
+  const box = rescueEl("div", "rescue-box");
+  const label = rescueEl("label", "repair-pick-label", "Service to reset");
+  label.htmlFor = "repair-service-pick";
+  box.appendChild(label);
+  const select = rescueEl("select", "repair-pick");
+  select.id = "repair-service-pick";
+  select.dataset.key = "service-pick";
+  select.disabled = disabled;
+  const none = rescueEl("option", "", "Choose a service…");
+  none.value = "";
+  select.appendChild(none);
+  (repair.services || []).forEach((s) => {
+    const o = rescueEl("option", "", s.resettable ? s.name : `${s.name} — ${s.detail}`);
+    o.value = s.name;
+    o.disabled = !s.resettable;
+    select.appendChild(o);
+  });
+  select.value = repair.service;
+  select.addEventListener("change", () => pickRepairService(select.value));
+  box.appendChild(select);
+  if (!(repair.services || []).some((s) => s.resettable)) {
+    box.appendChild(rescueEl("div", "rescue-muted", "No enabled service can be reset."));
+  }
+  body.appendChild(box);
+}
+
+function repairGroup(body, title, items, cls) {
+  if (!items.length) return;
+  body.appendChild(rescueEl("div", "rescue-group-title", title));
+  body.appendChild(rescueList(items.map((text) => ({ text })), cls ? () => cls : undefined));
+}
+
+function renderRepairPlanBody(body, plan) {
+  const rec = (kind, subs) => plan.records.filter((r) => r.kind === kind && (!subs || subs.includes(r.sub_kind)));
+  const text = (r) => repairActionText(r.kind, r.sub_kind, r.subject, r.detail);
+
+  if (plan.tier === "soft") {
+    body.appendChild(rescueEl("p", "", REPAIR_TIERS[0].text));
+    body.appendChild(rescueEl("div", "rescue-section-title", "What will happen"));
+    repairGroup(body, "Back up first", rec("backup").map(text));
+    repairGroup(body, "Refresh", rec("repair", ["flushcache", "hup", "renew"]).map(text));
+    repairGroup(body, "Left alone", rec("repair", ["leave"]).map(text), "rescue-muted");
+  } else if (plan.tier === "service") {
+    renderRepairPicker(body, false);
+    const c = plan.current;
+    if (c) {
+      body.appendChild(rescueEl("div", "rescue-section-title", `What gets cleared on “${plan.service}”`));
+      const box = rescueEl("div", "rescue-box");
+      box.appendChild(rescueEl("div", "", "IP settings: " + repairAddressText(c.now)));
+      box.appendChild(rescueEl("div", "", "DNS servers: " + (c.dns.length ? c.dns.join(", ") : "none")));
+      box.appendChild(rescueEl("div", "", "Search domains: " + (c.search.length ? c.search.join(", ") : "none")));
+      box.appendChild(
+        rescueEl("div", "rescue-muted", "Afterwards it gets its address automatically (DHCP) with no DNS servers or search domains of its own. It drops off the network for a few seconds while it is turned off and on.")
+      );
+      body.appendChild(box);
+    }
+    body.appendChild(rescueEl("div", "rescue-section-title", "What will happen"));
+    repairGroup(body, "Back up first", rec("backup").map(text));
+    repairGroup(body, "Reset", rec("repair", ["setdhcp", "cleardns", "clearsearch", "disable", "enable"]).map(text));
+  } else {
+    const warn = rescueEl("div", "repair-consequences");
+    warn.appendChild(rescueEl("div", "repair-consequences-title", "Before you go on"));
+    warn.appendChild(
+      rescueList(
+        [
+          { text: "After you restart, macOS rebuilds every network service from scratch: static IPs, Locations and the service order are gone." },
+          { text: "Wi-Fi networks may need to be rejoined." },
+          { text: "Nothing changes on the running network until you restart the Mac yourself. The app never restarts it." },
+          { text: "Use this only when nothing else works." },
+        ],
+        () => ""
+      )
+    );
+    body.appendChild(warn);
+    body.appendChild(rescueEl("div", "rescue-section-title", "What will happen"));
+    repairGroup(body, "Back up first", rec("backup").map(text));
+    repairGroup(body, "Move to the backup", rec("reset", ["move"]).map((r) => r.subject));
+    repairGroup(body, "Not moved", rec("reset", ["absent", "skip"]).map(text), "rescue-muted");
+  }
+
+  // A full reset's own "reset" notes say what the consequences box above says.
+  const notes = plan.records
+    .filter((r) => r.kind === "note" && !(plan.tier === "full" && r.subject === "reset"))
+    .map((r) => r.detail);
+  repairGroup(body, "Notes", notes, "rescue-muted");
+  repairGroup(body, "Other lines from the script", rec("other").map((r) => r.detail), "rescue-muted");
+  if (plan.backup_folder) {
+    body.appendChild(rescueEl("div", "rescue-muted", "Backups go to:"));
+    body.appendChild(rescueSelectable(plan.backup_folder));
+  }
+  plan.notices.forEach((n) => body.appendChild(rescueEl("div", "rescue-muted", "Note: " + n)));
+
+  if (plan.tier === "full") {
+    const box = rescueEl("div", "rescue-box");
+    const label = rescueEl("label", "repair-pick-label", `Type ${REPAIR_RESET_WORD} to confirm`);
+    label.htmlFor = "repair-typed";
+    box.appendChild(label);
+    const input = rescueEl("input", "repair-typed");
+    input.type = "text";
+    input.id = "repair-typed";
+    input.dataset.key = "typed";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("autocapitalize", "off");
+    input.setAttribute("autocorrect", "off");
+    input.value = repair.typed;
+    input.addEventListener("input", () => {
+      repair.typed = input.value;
+      const go = repair.buttons.querySelector('[data-key="confirm"]');
+      if (go) go.disabled = !repairConfirmReady();
+    });
+    box.appendChild(input);
+    body.appendChild(box);
+  }
+  body.appendChild(rescueFallback(plan.terminal_command));
+}
+
+function renderRepairResultBody(body, run) {
+  if (run.restart_needed) {
+    const panel = rescueEl("div", "repair-restart");
+    panel.appendChild(rescueEl("div", "repair-restart-title", "Restart needed"));
+    panel.appendChild(
+      rescueEl("div", "", "To finish the reset, restart this Mac when it suits you: Apple menu  → Restart…")
+    );
+    panel.appendChild(
+      rescueEl("div", "", "Until then the network keeps working with its current settings. The app does not restart the Mac.")
+    );
+    body.appendChild(panel);
+  }
+  run.messages.forEach((m) => body.appendChild(rescueEl("div", "rescue-error", m)));
+
+  const failed = run.steps.filter(rescueStepFailed);
+  const warned = run.steps.filter((s) => s.status === "verify_warn");
+  const rest = run.steps.filter((s) => !rescueStepFailed(s) && s.status !== "verify_warn");
+  if (failed.length) {
+    body.appendChild(rescueEl("div", "rescue-section-title", `Failed (${failed.length})`));
+    body.appendChild(rescueList(failed.map((s) => ({ text: repairStepText(s) })), () => "failed"));
+  }
+  if (warned.length) {
+    body.appendChild(rescueEl("div", "rescue-section-title", `Needs a look (${warned.length})`));
+    body.appendChild(rescueList(warned.map((s) => ({ text: repairStepText(s) })), () => "warn"));
+  }
+  if (rest.length) {
+    body.appendChild(rescueEl("div", "rescue-section-title", "Done"));
+    body.appendChild(rescueList(rest.map((s) => ({ text: repairStepText(s) })), () => "ok"));
+  }
+  if (run.backup_folder) {
+    body.appendChild(rescueEl("div", "rescue-muted", "Backup folder:"));
+    body.appendChild(rescueSelectable(run.backup_folder));
+  }
+  if (run.log_path) {
+    body.appendChild(rescueEl("div", "rescue-muted", "Full result:"));
+    body.appendChild(rescueSelectable(run.log_path));
+  }
+  if (run.outcome === "partial") body.appendChild(rescueFallback(run.terminal_command));
+}
+
+function repairConfirmLabel() {
+  if (repair.tier === "soft") return "Refresh network";
+  if (repair.tier === "service") return `Reset “${repair.service}”`;
+  return "Reset network settings";
+}
+
+function renderRepair() {
+  const { body, buttons } = repair;
+  const active = document.activeElement;
+  if (active && repair.modal.contains(active) && active.dataset.key) {
+    repair.focusKey = active.dataset.key;
+  }
+  repair.modal.dataset.state = repair.state;
+  body.replaceChildren();
+  buttons.replaceChildren();
+  const tierTitle = (REPAIR_TIERS.find((t) => t.tier === repair.tier) || {}).title;
+  repair.title.textContent = tierTitle ? `Repair network: ${tierTitle}` : "Repair network";
+
+  if (repair.banner && (repair.state === "plan" || repair.state === "loading")) {
+    body.appendChild(rescueEl("div", "rescue-banner", repair.banner));
+  }
+
+  const cancel = (label = "Cancel") => rescueButton(label, "", closeRepair, "cancel");
+  const back = () => rescueButton("Back", "", repairBackToChoose, "back");
+  let defaultKey = "cancel";
+
+  switch (repair.state) {
+    case "choose":
+      renderRepairChoose(body);
+      buttons.appendChild(cancel());
+      defaultKey = "tier:soft";
+      break;
+
+    case "loading":
+      if (repair.tier === "service" && repair.services) renderRepairPicker(body, true);
+      body.appendChild(rescueEl("p", "rescue-muted", "Checking the network settings…"));
+      buttons.appendChild(cancel());
+      buttons.appendChild(rescueButton("Back", "", repairBackToChoose, "back", true));
+      break;
+
+    case "pick":
+      body.appendChild(rescueEl("p", "", REPAIR_TIERS[1].text));
+      renderRepairPicker(body, false);
+      buttons.appendChild(cancel());
+      buttons.appendChild(back());
+      defaultKey = "service-pick";
+      break;
+
+    case "plan":
+      renderRepairPlanBody(body, repair.plan);
+      buttons.appendChild(cancel());
+      buttons.appendChild(back());
+      buttons.appendChild(
+        rescueButton(
+          repairConfirmLabel(),
+          repair.tier === "soft" ? "rescue-primary" : "rescue-danger",
+          confirmRepair,
+          "confirm",
+          !repairConfirmReady()
+        )
+      );
+      defaultKey = repair.tier === "full" ? "typed" : "cancel";
+      break;
+
+    case "running":
+      body.appendChild(rescueEl("p", "", "Waiting for your administrator password. macOS asks for it in a separate window."));
+      body.appendChild(
+        rescueEl("p", "rescue-muted", "Nothing changes until you enter it. After that the repair runs and checks the result, which can take up to about 15 seconds. Keep this window open.")
+      );
+      buttons.appendChild(rescueButton("Repairing…", "", () => {}, "running", true));
+      defaultKey = "";
+      break;
+
+    case "done": {
+      const partial = repair.run.outcome === "partial";
+      repair.title.textContent = partial ? "Repair finished with problems" : "Repair finished";
+      renderRepairResultBody(body, repair.run);
+      buttons.appendChild(cancel("Close"));
+      defaultKey = "cancel";
+      break;
+    }
+
+    case "refused":
+      repair.title.textContent = "Repair did not run";
+      body.appendChild(rescueEl("p", "rescue-error", repair.message));
+      body.appendChild(rescueEl("p", "", "Nothing was changed."));
+      buttons.appendChild(cancel("Close"));
+      buttons.appendChild(back());
+      break;
+
+    case "error":
+      repair.title.textContent = "Repair could not run";
+      body.appendChild(rescueEl("p", "rescue-error", repair.message));
+      body.appendChild(rescueFallback(repair.plan ? repair.plan.terminal_command : ""));
+      buttons.appendChild(cancel("Close"));
+      if (repair.canGoBack) buttons.appendChild(back());
+      break;
+
+    case "debug":
+      repair.title.textContent = "Debug build: not executed";
+      body.appendChild(rescueEl("p", "", "Debug builds never run the repair. A release build would run exactly this command (one argument per block):"));
+      repair.run.argv.forEach((arg) => body.appendChild(rescueSelectable(arg)));
+      buttons.appendChild(cancel("Close"));
+      buttons.appendChild(back());
+      break;
+  }
+
+  const again =
+    repair.focusKey && repair.modal.querySelector(`[data-key="${CSS.escape(repair.focusKey)}"]`);
+  const target =
+    (again && !again.disabled && again) ||
+    (defaultKey && repair.modal.querySelector(`[data-key="${CSS.escape(defaultKey)}"]`));
+  if (target && !target.disabled) target.focus();
+}
+
+document.getElementById("open-repair").addEventListener("click", openRepair);
+listen("repair-open", () => openRepair()).catch((e) => console.error("[repair-open listen failed]", e));
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || repair.state === "closed") return;
+  e.preventDefault();
+  if (repairCanClose()) closeRepair();
 });
 
 // Initialize once the DOM is ready

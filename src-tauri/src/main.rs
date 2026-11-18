@@ -240,6 +240,34 @@ async fn rescue_uninstall(
     Ok(run)
 }
 
+// --- Repair network (rescue script; never the helper) ---
+
+/// Read-only repair plan: tier "soft" | "service" (with `service`) | "full".
+#[tauri::command]
+async fn repair_plan(
+    tier: String,
+    service: Option<String>,
+) -> Result<platform::RepairPlan, String> {
+    tauri::async_runtime::spawn_blocking(move || platform::repair_plan(tier, service))
+        .await
+        .map_err(|e| format!("The repair plan could not be made: {}", e))?
+}
+
+/// Re-checks the tier against a fresh plan (a full reset also needs
+/// `confirm` == the typed word RESET), then runs the repair with one macOS
+/// administrator prompt (release builds; debug builds only return the
+/// command). Never restarts the Mac.
+#[tauri::command]
+async fn repair_run(
+    tier: String,
+    service: Option<String>,
+    confirm: String,
+) -> Result<platform::RepairRun, String> {
+    tauri::async_runtime::spawn_blocking(move || platform::repair_run(tier, service, confirm))
+        .await
+        .map_err(|e| format!("The repair could not be started: {}", e))?
+}
+
 /// "Finish and quit" after an uninstall, so the rescue script can remove the
 /// app bundle.
 #[tauri::command]
@@ -280,10 +308,12 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .menu(platform::app_menu)
         .on_menu_event(|app, event| {
-            // The menu item only opens the Uninstall window (plan loading);
+            // The menu items only open the Uninstall / Repair window;
             // nothing else happens until the user confirms there.
             if event.id() == platform::MENU_UNINSTALL_ID {
                 app.emit("rescue-open", ()).ok();
+            } else if event.id() == platform::MENU_REPAIR_ID {
+                app.emit("repair-open", ()).ok();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -303,6 +333,8 @@ fn main() {
             rescue_plan,
             rescue_uninstall,
             rescue_quit,
+            repair_plan,
+            repair_run,
         ])
         .setup(|app| {
             use std::sync::atomic::{AtomicBool, Ordering};

@@ -157,7 +157,8 @@
       <div class="status-bar" id="status-bar">Ready</div>
       
      <div class="signature">
-        <!-- TEMPORARY (Phase 1): this button moves into Settings → Maintenance in Phase 4. -->
+        <!-- TEMPORARY (Phase 1/3): these buttons move into Settings → Maintenance in Phase 4. -->
+        <button type="button" id="open-repair" class="signature-repair">Repair network…</button>
         <button type="button" id="open-uninstall" class="signature-uninstall">Uninstall…</button>
         <span class="signature-title">IT HURTS WHEN IP</span>
         <span class="signature-by">by Jaylen Jupp</span>
@@ -203,6 +204,19 @@
         <h2 id="rescue-modal-title">Uninstall It Hurts When IP</h2>
         <div id="rescue-modal-body"></div>
         <div id="rescue-modal-buttons"></div>
+      </div>
+    </div>
+
+    <!-- Repair network modal: pick a tier, the rescue script's plan, a confirm
+         (typed RESET for a full reset), the macOS password prompt, then the
+         result. main.js renders the body and buttons for each state
+         (data-state on #repair-modal). Never open at the same time as the
+         uninstall modal. -->
+    <div id="repair-modal-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="repair-modal-title">
+      <div id="repair-modal" data-state="closed">
+        <h2 id="repair-modal-title">Repair network</h2>
+        <div id="repair-modal-body"></div>
+        <div id="repair-modal-buttons"></div>
       </div>
     </div>
   </body>

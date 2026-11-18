@@ -15,6 +15,7 @@
 
 mod helper;
 mod parse;
+mod repair;
 mod rescue;
 
 use super::runner::{CmdOutput, CommandRunner, SystemRunner};
@@ -22,6 +23,8 @@ use parse::IpInfo;
 
 // In-app uninstall through the bundled rescue script (no helper involved).
 pub use rescue::{rescue_plan, rescue_uninstall, RescuePlan, RescueRun};
+// In-app network repair through the same script (P3-D4: never the helper).
+pub use repair::{repair_plan, repair_run, RepairPlan, RepairRun};
 
 pub use helper::HelperStatus;
 
@@ -111,9 +114,11 @@ pub fn get_helper_status() -> HelperStatus {
 
 /// Id of the "Uninstall It Hurts When IP…" menu item.
 pub const MENU_UNINSTALL_ID: &str = "ihwip-uninstall";
+/// Id of the "Repair Network…" menu item.
+pub const MENU_REPAIR_ID: &str = "ihwip-repair";
 
-/// Tauri's default macOS menu, plus "Uninstall It Hurts When IP…" in the app
-/// menu, after About.
+/// Tauri's default macOS menu, plus "Uninstall It Hurts When IP…" and
+/// "Repair Network…" in the app menu, after About.
 pub fn app_menu<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
 ) -> tauri::Result<tauri::menu::Menu<R>> {
@@ -128,10 +133,19 @@ pub fn app_menu<R: tauri::Runtime>(
             true,
             None::<&str>,
         )?;
+        let repair = MenuItem::with_id(
+            handle,
+            MENU_REPAIR_ID,
+            "Repair Network…",
+            true,
+            None::<&str>,
+        )?;
         // Default app menu: About, separator, Services, … Insert after the
-        // first separator: About, separator, Uninstall…, separator, Services.
+        // first separator: About, separator, Uninstall…, Repair Network…,
+        // separator, Services.
         app_submenu.insert(&uninstall, 2)?;
-        app_submenu.insert(&PredefinedMenuItem::separator(handle)?, 3)?;
+        app_submenu.insert(&repair, 3)?;
+        app_submenu.insert(&PredefinedMenuItem::separator(handle)?, 4)?;
     }
     Ok(menu)
 }

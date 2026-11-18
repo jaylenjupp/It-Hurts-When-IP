@@ -28,8 +28,8 @@ use crate::platform::runner::{CmdOutput, CommandRunner, SystemRunner};
 /// (release) or the repo's recovery/ folder (debug).
 const SCRIPT_FILE: &str = "ithurtswhenip-rescue.command";
 
-const BASH: &str = "/bin/bash";
-const OSASCRIPT: &str = "/usr/bin/osascript";
+pub(super) const BASH: &str = "/bin/bash";
+pub(super) const OSASCRIPT: &str = "/usr/bin/osascript";
 
 /// The only AppleScript the app ever runs, passed to osascript with `-e`.
 ///
@@ -44,7 +44,7 @@ const OSASCRIPT: &str = "/usr/bin/osascript";
 /// message, so osascript itself still exits 0.
 ///
 /// A test asserts this exact text: any change to it must show up in review.
-const APPLESCRIPT: &str = r#"on run argv
+pub(super) const APPLESCRIPT: &str = r#"on run argv
     set cmd to "/bin/bash"
     repeat with a in argv
         set cmd to cmd & space & quoted form of (contents of a)
@@ -77,6 +77,14 @@ pub enum RecordKind {
     Remove,
     Forget,
     Leftover,
+    /// Repair plans (--repair soft|service|full).
+    Repair,
+    /// Full network reset: `RESET move|absent|skip`.
+    Reset,
+    /// --restore-backup plans (not offered in the app; parsed so they are not `Other`).
+    Restore,
+    /// `RESTART needed`: printed last in a result when files were changed.
+    Restart,
     Other,
 }
 
@@ -136,6 +144,9 @@ pub enum StepStatus {
     Ok,
     Failed,
     VerifyOk,
+    /// `VERIFY warn` (repairs): settings are right but there is no DHCP
+    /// address yet. Reported, not a failure.
+    VerifyWarn,
     VerifyFailed,
 }
 
@@ -250,7 +261,7 @@ pub fn rescue_uninstall(dhcp: Vec<String>, restore_journal: bool) -> Result<Resc
 
 /// Release builds run osascript; debug builds never do. Decided here, in
 /// Rust, from the build profile only.
-const EXECUTE_OSASCRIPT: bool = !cfg!(debug_assertions);
+pub(super) const EXECUTE_OSASCRIPT: bool = !cfg!(debug_assertions);
 
 fn uninstall_for_this_build(
     runner: &dyn CommandRunner,
@@ -266,7 +277,7 @@ fn uninstall_for_this_build(
 /// Release: next to the running executable's bundle, i.e.
 /// `<bundle>/Contents/MacOS/<bin>` -> `<bundle>/Contents/Resources/<script>`.
 #[cfg(not(debug_assertions))]
-fn script_location() -> Result<PathBuf, String> {
+pub(super) fn script_location() -> Result<PathBuf, String> {
     let exe =
         std::env::current_exe().map_err(|e| format!("Could not find the running app: {}", e))?;
     bundled_script_path(&exe).ok_or_else(|| {
@@ -279,7 +290,7 @@ fn script_location() -> Result<PathBuf, String> {
 
 /// Debug: the repo's copy.
 #[cfg(debug_assertions)]
-fn script_location() -> Result<PathBuf, String> {
+pub(super) fn script_location() -> Result<PathBuf, String> {
     let path = PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../recovery/ithurtswhenip-rescue.command"
@@ -303,7 +314,7 @@ fn bundled_script_path(exe: &Path) -> Option<PathBuf> {
 }
 
 /// The script must exist as a file; its path must be UTF-8 to pass as argv.
-fn script_path_text(path: &Path) -> Result<String, String> {
+pub(super) fn script_path_text(path: &Path) -> Result<String, String> {
     if !path.is_file() {
         return Err(format!(
             "The rescue script is missing: it should be at {}.",
@@ -319,7 +330,7 @@ fn script_path_text(path: &Path) -> Result<String, String> {
 }
 
 /// Display only (shown for the user to copy into Terminal; never executed).
-fn terminal_command(script: &str) -> String {
+pub(super) fn terminal_command(script: &str) -> String {
     if script.contains(['"', '$', '`', '\\']) {
         format!("sudo bash '{}'", script.replace('\'', r"'\''"))
     } else {
@@ -401,10 +412,10 @@ fn lines(text: &str) -> impl Iterator<Item = &str> {
 
 /// A plan as printed by the script, before anything is derived from it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct PlanText {
-    records: Vec<PlanRecord>,
-    summary: Option<String>,
-    backup_folder: Option<String>,
+pub(super) struct PlanText {
+    pub(super) records: Vec<PlanRecord>,
+    pub(super) summary: Option<String>,
+    pub(super) backup_folder: Option<String>,
 }
 
 fn record_kind(word: &str) -> RecordKind {
@@ -417,6 +428,10 @@ fn record_kind(word: &str) -> RecordKind {
         "REMOVE" => RecordKind::Remove,
         "FORGET" => RecordKind::Forget,
         "LEFTOVER" => RecordKind::Leftover,
+        "REPAIR" => RecordKind::Repair,
+        "RESET" => RecordKind::Reset,
+        "RESTORE" => RecordKind::Restore,
+        "RESTART" => RecordKind::Restart,
         _ => RecordKind::Other,
     }
 }
@@ -443,7 +458,7 @@ fn parse_record(line: &str) -> PlanRecord {
 
 /// `# ...` lines are the header and summary; every other non-empty line is a
 /// record.
-fn parse_plan(stdout: &str) -> PlanText {
+pub(super) fn parse_plan(stdout: &str) -> PlanText {
     let mut out = PlanText::default();
     for line in lines(stdout) {
         if line.trim().is_empty() {
@@ -467,7 +482,7 @@ fn parse_plan(stdout: &str) -> PlanText {
 /// Value of `key=` in a record detail such as `ip=1.2.3.4 mask=… selected=no`.
 /// The key must start the detail or follow a space; the value runs to the
 /// next ` <one of keys>=` or the end, so a value with spaces stays whole.
-fn detail_value<'a>(detail: &'a str, key: &str, keys: &[&str]) -> Option<&'a str> {
+pub(super) fn detail_value<'a>(detail: &'a str, key: &str, keys: &[&str]) -> Option<&'a str> {
     let needle = format!("{}=", key);
     let start = detail
         .match_indices(&needle)
@@ -543,7 +558,7 @@ fn nothing_to_remove(text: &PlanText) -> bool {
 
 /// Splits the script's stderr into `rescue: note:` notices and other
 /// `rescue:` messages (refusals). Usage text and blank lines are dropped.
-fn script_messages(stderr: &str) -> (Vec<String>, Vec<String>) {
+pub(super) fn script_messages(stderr: &str) -> (Vec<String>, Vec<String>) {
     let mut notices = vec![];
     let mut messages = vec![];
     for line in lines(stderr) {
@@ -558,14 +573,16 @@ fn script_messages(stderr: &str) -> (Vec<String>, Vec<String>) {
 
 /// Stage A's output as returned by the AppleScript.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct RunText {
-    steps: Vec<StepLine>,
-    backup_folder: Option<String>,
-    log_path: Option<String>,
-    stage_b_started: bool,
-    messages: Vec<String>,
-    exit: Option<i32>,
-    osa_error: Option<(i32, String)>,
+pub(super) struct RunText {
+    pub(super) steps: Vec<StepLine>,
+    pub(super) backup_folder: Option<String>,
+    pub(super) log_path: Option<String>,
+    pub(super) stage_b_started: bool,
+    pub(super) messages: Vec<String>,
+    pub(super) exit: Option<i32>,
+    pub(super) osa_error: Option<(i32, String)>,
+    /// The `RESTART needed` record's text (repairs; printed after `# result`).
+    pub(super) restart: Option<String>,
 }
 
 fn parse_step(line: &str) -> Option<StepLine> {
@@ -588,6 +605,7 @@ fn parse_step(line: &str) -> Option<StepLine> {
         "VERIFY" => {
             let status = match f.get(1).copied() {
                 Some("ok") => StepStatus::VerifyOk,
+                Some("warn") => StepStatus::VerifyWarn,
                 Some("FAILED") => StepStatus::VerifyFailed,
                 _ => return None,
             };
@@ -608,7 +626,7 @@ fn parse_step(line: &str) -> Option<StepLine> {
 /// (the final report repeats failures; those are not counted twice). The
 /// backup folder and log come from the report; `# stage B process:` means
 /// stage B was started. Plan records printed before the run are ignored.
-fn parse_run_output(stdout: &str) -> RunText {
+pub(super) fn parse_run_output(stdout: &str) -> RunText {
     let mut out = RunText::default();
     let mut in_report = false;
     let mut osa_lines: Option<Vec<String>> = None;
@@ -651,6 +669,11 @@ fn parse_run_output(stdout: &str) -> RunText {
             out.messages.push(m.trim().to_string());
             continue;
         }
+        if let Some(text) = line.strip_prefix("RESTART\tneeded\t") {
+            let text = text.split('\t').nth(1).unwrap_or("").trim();
+            out.restart = Some(text.to_string());
+            continue;
+        }
         if !in_report {
             if let Some(step) = parse_step(line) {
                 out.steps.push(step);
@@ -665,7 +688,7 @@ fn parse_run_output(stdout: &str) -> RunText {
 
 /// Exit status mapping. An AppleScript error wins (-128 = cancelled), then
 /// the script's own exit code, then osascript's.
-fn map_outcome(out: &CmdOutput, text: &RunText) -> (Outcome, Option<String>) {
+pub(super) fn map_outcome(out: &CmdOutput, text: &RunText) -> (Outcome, Option<String>) {
     if let Some((code, msg)) = &text.osa_error {
         if *code == USER_CANCELED {
             return (Outcome::Cancelled, None);
@@ -673,7 +696,7 @@ fn map_outcome(out: &CmdOutput, text: &RunText) -> (Outcome, Option<String>) {
         return (
             Outcome::Error,
             Some(format!(
-                "macOS did not run the uninstall (AppleScript error {}: {}).",
+                "macOS did not run the rescue script (AppleScript error {}: {}).",
                 code, msg
             )),
         );
@@ -733,7 +756,7 @@ fn run_result(argv: Vec<String>, out: &CmdOutput) -> RescueRun {
 
 // --- Plan and uninstall, testable with a FakeRunner ---
 
-enum PlanRun {
+pub(super) enum PlanRun {
     Ready(PlanText, Vec<String>),
     Refused(String, Vec<String>),
 }
@@ -744,7 +767,16 @@ fn run_plan(
     pid: u32,
     choices: &NetworkChoices,
 ) -> Result<PlanRun, String> {
-    let args = plan_args(script, pid, choices);
+    run_script_plan(runner, &plan_args(script, pid, choices))
+}
+
+/// Runs `/bin/bash <args>` for a read-only `--plan` (the args must include
+/// it) and parses the result: exit 0 = a plan, exit 2 = refused with the
+/// script's own message, anything else = an error.
+pub(super) fn run_script_plan(
+    runner: &dyn CommandRunner,
+    args: &[String],
+) -> Result<PlanRun, String> {
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = runner
         .run(BASH, &argv)

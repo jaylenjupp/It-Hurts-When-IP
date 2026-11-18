@@ -541,6 +541,8 @@ input.invalid {
 .signature {
   display: flex;
   flex-direction: row;
+  flex-wrap: wrap; /* only wraps if the temporary buttons don't fit at 480 px */
+  row-gap: 4px;
   align-items: baseline;
   justify-content: flex-end;
   gap: 6px;
@@ -586,6 +588,27 @@ input.invalid {
 
 .signature-uninstall:hover,
 .signature-uninstall:active {
+  background: transparent;
+  color: #aaa;
+  text-decoration: underline;
+}
+
+/* TEMPORARY (Phase 3): "Repair network…", left of "Uninstall…"; moves into
+   Settings → Maintenance in Phase 4. Same look as .signature-uninstall. */
+.signature-repair {
+  pointer-events: auto;
+  display: inline;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11px;
+  color: #5a5a5a;
+  letter-spacing: 0.03em;
+}
+
+.signature-repair:hover,
+.signature-repair:active {
   background: transparent;
   color: #aaa;
   text-decoration: underline;
@@ -715,7 +738,8 @@ input.invalid {
 /* --- Uninstall modal (rescue script) ---
    Same look as the update modal; colours come from the --ihw-* tokens. */
 
-#rescue-modal-overlay {
+#rescue-modal-overlay,
+#repair-modal-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.75);
@@ -725,11 +749,13 @@ input.invalid {
   z-index: 1100; /* above the update modal */
 }
 
-#rescue-modal-overlay.hidden {
+#rescue-modal-overlay.hidden,
+#repair-modal-overlay.hidden {
   display: none;
 }
 
-#rescue-modal {
+#rescue-modal,
+#repair-modal {
   background: var(--ihw-bg);
   border: 1px solid var(--ihw-border);
   border-radius: 12px;
@@ -743,7 +769,8 @@ input.invalid {
   gap: var(--ihw-gap);
 }
 
-#rescue-modal-title {
+#rescue-modal-title,
+#repair-modal-title {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
@@ -751,7 +778,8 @@ input.invalid {
   line-height: 1.3;
 }
 
-#rescue-modal-body {
+#rescue-modal-body,
+#repair-modal-body {
   min-height: 0;
   overflow-y: auto;
   display: flex;
@@ -762,14 +790,16 @@ input.invalid {
   color: var(--ihw-fg);
 }
 
-#rescue-modal-buttons {
+#rescue-modal-buttons,
+#repair-modal-buttons {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
 }
 
-#rescue-modal-buttons button {
+#rescue-modal-buttons button,
+#repair-modal-buttons button {
   flex-direction: row;
   padding: 8px 12px;
   border-radius: 6px;
@@ -780,34 +810,42 @@ input.invalid {
   font-weight: 500;
 }
 
-#rescue-modal-buttons button:hover:not(:disabled) {
+#rescue-modal-buttons button:hover:not(:disabled),
+#repair-modal-buttons button:hover:not(:disabled) {
   background: #48484a;
   border-color: #5a5a5c;
 }
 
 /* The destructive confirm: red, set apart on the right. */
-#rescue-modal-buttons button.rescue-danger {
+#rescue-modal-buttons button.rescue-danger,
+#repair-modal-buttons button.rescue-danger {
   background: var(--ihw-danger-bg);
   border-color: var(--ihw-danger-bg);
 }
 
-#rescue-modal-buttons button.rescue-danger:hover:not(:disabled) {
+#rescue-modal-buttons button.rescue-danger:hover:not(:disabled),
+#repair-modal-buttons button.rescue-danger:hover:not(:disabled) {
   background: #d93a33;
   border-color: #d93a33;
 }
 
-#rescue-modal-buttons button.rescue-primary {
+#rescue-modal-buttons button.rescue-primary,
+#repair-modal-buttons button.rescue-primary {
   background: var(--ihw-accent);
   border-color: var(--ihw-accent);
 }
 
-#rescue-modal-buttons button.rescue-primary:hover:not(:disabled) {
+#rescue-modal-buttons button.rescue-primary:hover:not(:disabled),
+#repair-modal-buttons button.rescue-primary:hover:not(:disabled) {
   background: #1f8eff;
   border-color: #1f8eff;
 }
 
 #rescue-modal button:disabled,
-#rescue-modal input:disabled {
+#rescue-modal input:disabled,
+#repair-modal button:disabled,
+#repair-modal input:disabled,
+#repair-modal select:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -942,4 +980,113 @@ label.rescue-check input {
 .rescue-link:active {
   background: none;
   color: #1f8eff;
+}
+
+/* --- Repair network modal ---
+   Shares the uninstall modal's look (selectors above) and .rescue-* classes. */
+
+/* Tier cards: big targets; the full reset is red-edged and set apart. */
+#repair-modal button.repair-tier {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  border-radius: var(--ihw-radius);
+  border: 1px solid var(--ihw-border);
+  background: var(--ihw-surface);
+  color: var(--ihw-fg);
+}
+
+#repair-modal button.repair-tier:hover {
+  border-color: var(--ihw-accent);
+  background: #262628;
+}
+
+#repair-modal button.repair-tier-danger {
+  margin-top: 8px;
+  border-color: #c4302b88;
+}
+
+#repair-modal button.repair-tier-danger:hover {
+  border-color: var(--ihw-danger);
+}
+
+.repair-tier-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.repair-tier-danger .repair-tier-title {
+  color: var(--ihw-danger);
+}
+
+.repair-tier-text {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ihw-muted);
+}
+
+/* Service picker and the typed RESET field. */
+label.repair-pick-label {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ihw-fg);
+}
+
+#repair-modal select.repair-pick {
+  font-size: 12px;
+}
+
+#repair-modal input.repair-typed {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Full reset: consequences, amber-edged. */
+.repair-consequences {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--ihw-radius);
+  border: 1px solid var(--ihw-warn);
+  background: #ff9f0a14;
+}
+
+.repair-consequences-title {
+  font-weight: 600;
+  color: var(--ihw-warn);
+}
+
+/* Warnings in a result (e.g. no address yet): amber, not red. */
+.rescue-list li.warn {
+  color: var(--ihw-warn);
+}
+
+.rescue-list li.warn::before {
+  content: "!";
+  color: var(--ihw-warn);
+  font-weight: 700;
+}
+
+/* "Restart needed": prominent, calm. No restart button (P3-D3). */
+.repair-restart {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--ihw-radius);
+  border: 1px solid var(--ihw-accent);
+  background: #0a84ff1f;
+}
+
+.repair-restart-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ihw-fg);
 }
