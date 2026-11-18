@@ -87,11 +87,11 @@ Every phase ends with a **draft release** (see `docs/RELEASING.md`) and a "what 
 - `docs/ROAD-TESTING.md` repair section + manual Terminal fallback steps (no app needed).
 
 **Acceptance**
-- [ ] Script tests with fakes: soft repair logs DNS flush + DHCP renew only for DHCP services; service reset logs the expected argv sequence; full reset moves exactly the listed plists into the backup dir and nothing else
-- [ ] `--restore-backup` puts the files back (checksums match)
-- [ ] Full reset refuses without `RESET` confirmation (or `--yes` from the app after its own typed confirm)
-- [ ] `shellcheck` clean
-- [ ] Draft release; owner runs soft + service reset on travel Mac and records result (full reset only if owner chooses to)
+- [x] Script tests with fakes: soft repair logs DNS flush + DHCP renew only for DHCP services; service reset logs the expected argv sequence; full reset moves exactly the listed plists into the backup dir and nothing else
+- [x] `--restore-backup` puts the files back (checksums match)
+- [x] Full reset refuses without `RESET` confirmation (or `--yes` from the app after its own typed confirm)
+- [x] `shellcheck` clean
+- [ ] Draft release (done 2026-11-18, `dev-v1.13.1-20261118-2246-de86293`); owner runs soft + service reset on the Mac Studio (P3-D6) and records result (full reset only if owner chooses to) — for Jay
 
 ---
 
