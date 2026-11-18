@@ -480,4 +480,38 @@ else
     pass "${RESCUE_SYNTAX_LABEL}"
 fi
 
+# Phase 3: the bundled script must do network repair (the app's Repair
+# network… runs it with --repair) and restore a full reset. Read as text only;
+# the script is never run here. Before Phase 3 it refused --repair with
+# "network repair arrives in a later version" (help text and parser).
+# rescue_has <label> <needle>…: PASS if the bundled script contains every needle.
+rescue_has() {
+    local label="$1" needle missing=""
+    shift
+    if [[ ! -f "${RESCUE_BUNDLED}" ]]; then
+        fail "${label} — missing from the app bundle"
+        return
+    fi
+    for needle in "$@"; do
+        grep -q -F -- "${needle}" "${RESCUE_BUNDLED}" || missing="${missing} ${needle}"
+    done
+    if [[ -z "${missing}" ]]; then
+        pass "${label}"
+    else
+        fail "${label} — not found:${missing}"
+    fi
+}
+rescue_has "bundled rescue script handles --repair soft|service|full (check_repair_value, resolve_repair, resolve_full)" \
+    'check_repair_value()' 'resolve_repair()' 'resolve_full()' '--repair soft|service:"<service>"|full'
+rescue_has "bundled rescue script handles --restore-backup (option, resolve_restore, run_restore)" \
+    '--restore-backup)' 'resolve_restore()' 'run_restore()'
+RESCUE_OLD_LABEL="bundled rescue script no longer says repair \"arrives in a later version\""
+if [[ ! -f "${RESCUE_BUNDLED}" ]]; then
+    fail "${RESCUE_OLD_LABEL} — missing from the app bundle"
+elif hits="$(grep -n -i -F 'arrives in a later version' "${RESCUE_BUNDLED}" | awk 'NR <= 3')" && [[ -n "${hits}" ]]; then
+    fail "${RESCUE_OLD_LABEL} — found: $(join_lines "${hits}")"
+else
+    pass "${RESCUE_OLD_LABEL}"
+fi
+
 summary_and_exit

@@ -88,6 +88,10 @@ The app is built around your saved configurations:
 
 Because the privileged helper applies the changes, none of these actions prompt you for a password.
 
+### Repair network (macOS)
+
+If an adapter is left in a bad state, choose **It Hurts When IP → Repair Network…** in the menu bar (or **Repair network…** at the bottom of the window). It offers a soft refresh (flush DNS, renew DHCP), a reset of one service (back to DHCP with its DNS servers and search domains cleared), and, as a last resort, a full network reset that takes effect after you restart; each one shows its plan and backs up your settings to `/Users/Shared/ItHurtsWhenIP-backups/` before asking for your password. The same repairs work without the app from Terminal with the rescue script (see *Uninstall* below for where to find it), e.g. `sudo bash ~/Downloads/ithurtswhenip-rescue.command --repair soft`, `--repair service:"<service>"` or `--repair full`, and `--restore-backup <backup folder>` undoes a full reset.
+
 ## Uninstall
 
 ### macOS
@@ -100,7 +104,7 @@ Open **Terminal** and run:
 sudo bash "/Applications/It Hurts When IP.app/Contents/Resources/ithurtswhenip-rescue.command"
 ```
 
-It shows a short menu: show the plan, uninstall, or quit. Nothing is removed until you type `UNINSTALL`.
+It shows a short menu: show the plan, uninstall, repair the network (see *Repair network* above), restore a full-reset backup, or quit. Nothing is removed until you type `UNINSTALL`.
 
 - **Preview first:** add `--plan` to the end of the command to see every step. It changes nothing.
 - **App missing or broken?** Download `ithurtswhenip-rescue.command` from the [Releases page](https://github.com/jaylenjupp/it-hurts-when-ip/releases) and run it the same way: `sudo bash ~/Downloads/ithurtswhenip-rescue.command`

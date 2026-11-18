@@ -1,6 +1,6 @@
 # Testing draft builds on the travel Mac
 
-Everything here runs **on your travel MacBook**, by you. Claude never installs or runs network changes; it builds, you test.
+Everything here runs **on your travel MacBook**, by you. Claude never installs or runs network changes; it builds, you test. (Exception: Phase 3 testing happens on the Mac Studio, by you, see *Phase 3 — network repair*.)
 
 **Download this file and the rescue script before you start testing**, so you have them if the network goes away.
 
@@ -116,38 +116,141 @@ Every command runs on **Jay's travel Mac, Terminal**. Paste each output into the
    sw_vers
    ```
 
-## If the network is broken — without the app
-Work down this list; stop when it works. These are standard macOS commands, nothing app-specific.
 
-Note (from Phase 2 on): the helper records each service's original settings before it first changes it, in `/Library/Application Support/com.ithurtswhenip.helper/journal.json` (read it with `sudo cat "<that path>"`). `sudo bash ~/Downloads/ithurtswhenip-rescue.command --uninstall --network restore-journal` puts them back (and removes the app; try `--plan --network restore-journal` first, it changes nothing).
+### Phase 3 — network repair
+**Where:** Jay's **Mac Studio** (macOS 26.7.1), in the installed app and in Jay's own Terminal. Jay runs every step himself. The Claude session never installs, never runs a repair and never changes the network (CLAUDE.md core rule 1); it only reads what you paste back.
 
-1. **Stop the helper so nothing else changes:**
+The Mac Studio is also the machine the Claude session runs on. If a step takes its internet uplink down, the session is cut off until the network is back, so keep the *Manual Terminal fallback* below on your phone.
+
+**Before you start** (Mac Studio, Terminal; all read-only):
+1. Download this draft's `ithurtswhenip-rescue.command` to `~/Downloads`.
+2. Find the internet uplink, so you can avoid it:
+   ```bash
+   route -n get default | grep interface    # the uplink's device, e.g. en0
+   networksetup -listallhardwareports       # which service name uses that device
+   networksetup -listallnetworkservices
+   ```
+3. Pick a **test adapter that is NOT the uplink** (for example a USB or Thunderbolt Ethernet adapter you don't need right now). Save its current settings; the service reset switches it to DHCP and clears its DNS servers and search domains:
+   ```bash
+   networksetup -getinfo "<test service>"
+   networksetup -getdnsservers "<test service>"
+   networksetup -getsearchdomains "<test service>"
+   ```
+4. Install the draft pkg (see *Installing*).
+
+Every repair saves its backup to `/Users/Shared/ItHurtsWhenIP-backups/<UTC time>/` (one folder per run, kept): `plan.txt`, `rescue.log` (the full result), `network-before.txt`, plus `service-before.txt` (service reset) or `system-configuration/` with `SHA256SUMS` (full reset).
+
+#### In the app (Mac Studio, the app)
+Open **It Hurts When IP → Repair Network…** in the menu bar, or **Repair network…** at the bottom of the window. Every tier shows its plan first; nothing changes until you confirm and enter your password.
+
+1. **Soft refresh.** Choose **Soft refresh**. The plan lists: clear the DNS cache, restart the DNS responder, and "ask for a fresh address" for each enabled adapter on DHCP; static, disabled and unplugged adapters are listed as left alone. Click **Refresh network** → password → **Repair finished** with a *Done* list, the backup folder and the full-result path.
+   - Expected: adapters on DHCP show "working, automatic (DHCP), <ip> / <mask>". An adapter with no cable or no DHCP server shows in amber under **Needs a look**: "No address yet — check cable/switch/DHCP server" (or "only a self-assigned 169.254 address"). That is a warning, not a failure.
+   - Note: if the uplink is on DHCP it is renewed too; expect at most a short blip.
+   - What can go wrong / undo: no settings are changed, so there is nothing to undo. If something looks off afterwards, a second soft refresh or turning the adapter off and on (fallback step 5) is enough.
+2. **Cancel the password prompt.** Start a soft refresh again, then click **Cancel** in the macOS password window.
+   - Expected: back on the plan with "Cancelled, nothing changed." No new folder in `ls /Users/Shared/ItHurtsWhenIP-backups/` (Mac Studio, Terminal).
+3. **Service reset on the test adapter (NOT the uplink).** Choose **Reset one service**. The picker lists every service; ones that can't be reset are greyed with the reason. Pick the test adapter. The plan shows "What gets cleared on <service>" (current IP, DNS servers, search domains). Click **Reset "<service>"** → password → result.
+   - Expected *Done* lines: switch to automatic (DHCP), clear DNS servers, clear search domains, turn off, turn on again; then "working, …" or the amber **Needs a look** "No address yet" if nothing hands out an address on that adapter.
+   - Check (Mac Studio, Terminal): `networksetup -getinfo "<test service>"` says DHCP Configuration; `networksetup -getdnsservers "<test service>"` and `networksetup -getsearchdomains "<test service>"` say none are set.
+   - What can go wrong / undo: the adapter loses its static IP and its DNS / search domains, and drops off the network for a few seconds. The old values are in `/Users/Shared/ItHurtsWhenIP-backups/<UTC time>/service-before.txt`; put them back with the app's quick set (or Manual entry), or in Terminal (Mac Studio, Terminal):
+     ```bash
+     sudo networksetup -setmanual "<test service>" <ip> <mask> <router>
+     sudo networksetup -setdnsservers "<test service>" <dns1> <dns2>
+     sudo networksetup -setsearchdomains "<test service>" <domain>
+     ```
+4. **Full network reset — only if you choose to, and last** (after every other test is reported and the session has pushed its work). Choose **Full network reset**, read the consequences, type `RESET`, click **Reset network settings** → password.
+   - Expected: *Done* lists the backup of each file, "Write the backup checksums", "Move <file> to the backup" and "moved, backup copy checked" per file. A **Restart needed** panel says to restart from the Apple menu; there is no restart button, and the network keeps working until you restart. On macOS 26 `com.apple.network.identification.plist` doesn't exist; it shows as not present (normal).
+   - Check (Mac Studio, Terminal): `ls "/Users/Shared/ItHurtsWhenIP-backups/<UTC time>/system-configuration/"` lists the moved files and `SHA256SUMS`.
+   - Then restart (Apple menu → Restart…). Afterwards every service, static IP, Location and the service order are rebuilt from scratch; rejoin Wi-Fi if needed.
+   - What can go wrong / undo: the Mac comes back with default network settings (and the uplink may need its static settings again). To go back to exactly what you had, run `--restore-backup` with that folder (script test 5 below), then restart.
+
+#### With the rescue script (Mac Studio, Terminal)
+The examples use `~/Downloads/ithurtswhenip-rescue.command`; the in-app copy is `"/Applications/It Hurts When IP.app/Contents/Resources/ithurtswhenip-rescue.command"`. Lines are tab-separated. `echo $?` afterwards: `0` ok (also when there are only warnings), `1` some steps failed, `2` refused or cancelled (nothing changed).
+
+1. **Plan a soft refresh** (changes nothing):
+   ```bash
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command --plan --repair soft
+   ```
+   Expected: `# repair: soft`, `# plan only: nothing has been changed`, `REPAIR flushcache …`, `REPAIR hup …`, one `REPAIR renew <service> device=<dev> now=…` per enabled DHCP service, `REPAIR leave <service> <reason>` for the others, `# summary: …`. Run it without `--plan` to do it (type `REPAIR`).
+2. **Service reset on the test adapter** (NOT the uplink):
+   ```bash
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command --plan --repair service:"<test service>"
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command --repair service:"<test service>"
+   ```
+   The plan shows `BACKUP snapshot <service> service-before.txt`, `REPAIR current … now=… dns=… search=…`, then `setdhcp`, `cleardns`, `clearsearch`, `disable`, `enable`. The real run asks you to type `REPAIR`, then prints `OK REPAIR …` lines and `VERIFY ok repair:<service> now=dhcp/<ip>/…`, or `VERIFY warn repair:<service> …; no address yet: check the cable, the switch or the DHCP server` (or `link-local only (169.254.x.x)`), counted under `# warnings:`; exit code still `0`. Undo: as in-app test 3 (`service-before.txt`).
+3. **The menu:**
+   ```bash
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command
+   ```
+   Expected: items 1–8 (4 soft refresh, 5 reset one service, 6 full network reset, 7 restore a backup, 8 quit). Try `4` and `5` (5 lists numbered services; pick the test adapter). Each prints the plan and asks you to type `REPAIR`; anything else cancels with "cancelled: nothing has been changed" (exit `2`). `8` quits without changing anything.
+4. **Plan a full reset** (changes nothing; safe any time):
+   ```bash
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command --plan --repair full
+   ```
+   Expected: `BACKUP file …` and `RESET move …` for each file that exists, `RESET absent …` for one that doesn't (`com.apple.network.identification.plist` on macOS 26), three `NOTE info reset …` lines, `# summary: …`.
+5. **Restore after a full reset** (only if you ran one):
+   ```bash
+   ls /Users/Shared/ItHurtsWhenIP-backups/
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command --plan --restore-backup /Users/Shared/ItHurtsWhenIP-backups/<UTC time of the reset>
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command --restore-backup /Users/Shared/ItHurtsWhenIP-backups/<UTC time of the reset>
+   ```
+   (Menu item `7` does the same and lists the backups newest first.) Type `RESTORE`. Expected: the current files are backed up first to a **new** backup folder, then `OK RESTORE file …`, `VERIFY ok restore:<file> matches SHA256SUMS, mode 644`, and last `RESTART needed … RESTART NEEDED: …`. Restart the Mac yourself; your old services, static IPs and Locations are back. If anything doesn't match its checksum the script refuses and changes nothing.
+
+Paste every output into the session.
+
+## Manual Terminal fallback (no app, no script)
+Use this when the app and the rescue script can't help (or you don't have the script). Every step runs on **any Mac, Terminal** and uses only macOS built-ins. Work down the list and stop when the network works. Use the service name exactly as listed in step 1, in quotes.
+
+1. **List the services** (any Mac, Terminal; read-only):
+   ```bash
+   networksetup -listallnetworkservices
+   ```
+2. **Read a service's current state** (any Mac, Terminal; read-only). Repeat after each step below to see what changed:
+   ```bash
+   networksetup -getinfo "<service>"
+   networksetup -getdnsservers "<service>"
+   networksetup -getsearchdomains "<service>"
+   ```
+3. **Flush DNS** (any Mac, Terminal):
+   ```bash
+   sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder
+   ```
+4. **Put the service back on DHCP and clear its DNS servers and search domains** (any Mac, Terminal). This removes a static IP on that service; write it down first (step 2):
+   ```bash
+   sudo networksetup -setdhcp "<service>"
+   sudo networksetup -setdnsservers "<service>" Empty
+   sudo networksetup -setsearchdomains "<service>" Empty
+   ```
+5. **Turn the service off and on** (any Mac, Terminal):
+   ```bash
+   sudo networksetup -setnetworkserviceenabled "<service>" off
+   sudo networksetup -setnetworkserviceenabled "<service>" on
+   ```
+6. **Stop the app's helper so nothing else changes** (any Mac, Terminal; only if the app is installed):
    ```bash
    sudo launchctl bootout system/com.ithurtswhenip.helper
    ```
    (On older macOS: `sudo launchctl unload /Library/LaunchDaemons/com.ithurtswhenip.helper.plist`.)
-2. **Put the affected service back on DHCP** (name exactly as listed):
+
+Note (from Phase 2 on): the helper records each service's original settings before it first changes it, in `/Library/Application Support/com.ithurtswhenip.helper/journal.json` (read it with `sudo cat "<that path>"`). The rescue script can put them back, see below.
+
+### Then: the rescue script
+If you can get online at all (phone hotspot, another Mac), get the rescue script and let it do the rest, with backups and a plan first:
+1. In a browser, open the project's **Releases** page (`github.com/jaylenjupp/it-hurts-when-ip/releases`), open the newest release and download `ithurtswhenip-rescue.command` (it lands in `~/Downloads`). Copy it to a USB stick if the broken Mac can't get online.
+2. Run it (any Mac, Terminal):
    ```bash
-   networksetup -listallnetworkservices
-   sudo networksetup -setdhcp "Wi-Fi"
+   sudo bash ~/Downloads/ithurtswhenip-rescue.command
    ```
-3. **Flush DNS:**
-   ```bash
-   sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder
-   ```
-4. **Turn the service off and on:**
-   ```bash
-   sudo networksetup -setnetworkserviceenabled "Wi-Fi" off
-   sudo networksetup -setnetworkserviceenabled "Wi-Fi" on
-   ```
-5. **Full network configuration reset** (last resort — you'll rejoin Wi-Fi and lose all custom network settings and Locations):
-   ```bash
-   sudo mkdir -p /Users/Shared/network-backup
-   cd /Library/Preferences/SystemConfiguration
-   sudo cp -p preferences.plist NetworkInterfaces.plist /Users/Shared/network-backup/
-   sudo cp -p com.apple.network.identification.plist com.apple.airport.preferences.plist /Users/Shared/network-backup/ 2>/dev/null
-   sudo rm preferences.plist NetworkInterfaces.plist
-   sudo rm -f com.apple.network.identification.plist com.apple.airport.preferences.plist
-   ```
-   Then restart. macOS rebuilds these files. TODO(verify) the file list against your macOS version before you're relying on it.
-6. **Remove the app completely** (from Phase 1 on): `sudo bash ~/Downloads/ithurtswhenip-rescue.command` and pick `2` or `3` — see *Uninstalling (rescue script)* above.
+   The menu offers soft refresh (4), reset one service (5), full network reset (6), restore a full-reset backup (7) and uninstall (2, 3). `--plan` with any action shows what it would do without changing anything; `--help` lists every option. If the app is still installed, the same script is at `"/Applications/It Hurts When IP.app/Contents/Resources/ithurtswhenip-rescue.command"`.
+3. To put back the settings the app recorded and remove the app (any Mac, Terminal): `sudo bash ~/Downloads/ithurtswhenip-rescue.command --plan --network restore-journal` first (changes nothing), then the same with `--uninstall` instead of `--plan`.
+
+Last resort without the script: a full network configuration reset by hand (you'll rejoin Wi-Fi and lose all custom network settings and Locations). The script's `--repair full` does the same with checksummed backups and can undo it, so prefer it. By hand (any Mac, Terminal):
+```bash
+sudo mkdir -p /Users/Shared/network-backup
+cd /Library/Preferences/SystemConfiguration
+sudo cp -p preferences.plist NetworkInterfaces.plist /Users/Shared/network-backup/
+sudo cp -p com.apple.network.identification.plist com.apple.airport.preferences.plist /Users/Shared/network-backup/ 2>/dev/null
+sudo rm preferences.plist NetworkInterfaces.plist
+sudo rm -f com.apple.network.identification.plist com.apple.airport.preferences.plist
+```
+Then restart. macOS rebuilds these files. To undo, copy the files from `/Users/Shared/network-backup/` back into `/Library/Preferences/SystemConfiguration/` with `sudo cp -p` and restart.
