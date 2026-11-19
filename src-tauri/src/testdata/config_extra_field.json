@@ -1,0 +1,31 @@
+{
+  "quick_set_1": {
+    "name": "Stage Left",
+    "ip": "192.0.2.10",
+    "subnet": "255.255.255.0",
+    "gateway": "192.0.2.1"
+  },
+  "quick_set_2": {
+    "name": "Quick Set 2",
+    "ip": "",
+    "subnet": "",
+    "gateway": ""
+  },
+  "quick_set_3": {
+    "name": "Quick Set 3",
+    "ip": "",
+    "subnet": "",
+    "gateway": ""
+  },
+  "quick_set_4": {
+    "name": "Quick Set 4",
+    "ip": "",
+    "subnet": "",
+    "gateway": "",
+    "dns": ["198.51.100.53"]
+  },
+  "update_prompt_dismissed_at": null,
+  "advanced_mode": true,
+  "check_updates_on_launch": false,
+  "some_future_setting": { "level": 3 }
+}

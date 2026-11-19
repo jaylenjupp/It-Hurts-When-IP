@@ -3,73 +3,50 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs;
+use std::sync::Mutex;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 mod build_info;
+mod config;
 mod platform;
 mod update;
 
-// --- Persistent config ---
+use config::{AppConfig, QuickSetProfile};
 
-#[derive(Serialize, Deserialize, Clone)]
-struct QuickSetProfile {
-    name: String,
-    ip: String,
-    subnet: String,
-    gateway: String,
-}
+// --- Persistent config (model + load/save live in config.rs) ---
 
-#[derive(Serialize, Deserialize)]
-struct AppConfig {
-    quick_set_1: QuickSetProfile,
-    quick_set_2: QuickSetProfile,
-    quick_set_3: QuickSetProfile,
-    quick_set_4: QuickSetProfile,
-    #[serde(default)]
-    pub update_prompt_dismissed_at: Option<i64>,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        let blank = |n: &str| QuickSetProfile {
-            name: n.to_string(),
-            ip: String::new(),
-            subnet: String::new(),
-            gateway: String::new(),
-        };
-        AppConfig {
-            quick_set_1: blank("Quick Set 1"),
-            quick_set_2: blank("Quick Set 2"),
-            quick_set_3: blank("Quick Set 3"),
-            quick_set_4: blank("Quick Set 4"),
-            update_prompt_dismissed_at: None,
-        }
-    }
-}
+/// Serialises load → modify → save so two commands can't lose each other's
+/// changes.
+static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 fn get_config_path(app: &tauri::AppHandle) -> std::path::PathBuf {
     app.path().app_data_dir().unwrap().join("config.json")
 }
 
+/// Read-only load. An unreadable file is moved aside and defaults are used.
 fn load_config(app: &tauri::AppHandle) -> AppConfig {
-    let path = get_config_path(app);
-    if path.exists() {
-        let data = fs::read_to_string(&path).unwrap_or_default();
-        serde_json::from_str(&data).unwrap_or_default()
-    } else {
-        AppConfig::default()
-    }
+    let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    config::load_from(&get_config_path(app)).config
 }
 
-fn save_config(app: &tauri::AppHandle, config: &AppConfig) {
+/// Load → change → save, keeping every other field as it was.
+fn update_config(
+    app: &tauri::AppHandle,
+    change: impl FnOnce(&mut AppConfig),
+) -> Result<(), String> {
     let path = get_config_path(app);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    let data = serde_json::to_string_pretty(config).unwrap();
-    fs::write(path, data).ok();
+    let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cfg = config::load_for_update(&path)?;
+    change(&mut cfg);
+    config::save_to(&path, &cfg)
+}
+
+#[derive(Serialize)]
+struct Settings {
+    advanced_mode: bool,
+    check_updates_on_launch: bool,
 }
 
 // --- Tauri commands (delegate to platform module) ---
@@ -129,21 +106,38 @@ fn save_quick_set(
     subnet: String,
     gateway: String,
 ) -> Result<String, String> {
-    let mut config = load_config(&app);
     let profile = QuickSetProfile {
         name,
         ip,
         subnet,
         gateway,
     };
-    match slot {
+    update_config(&app, |config| match slot {
         1 => config.quick_set_1 = profile,
         2 => config.quick_set_2 = profile,
         3 => config.quick_set_3 = profile,
         _ => config.quick_set_4 = profile,
-    }
-    save_config(&app, &config);
+    })?;
     Ok(String::from("Saved"))
+}
+
+#[tauri::command]
+fn get_settings(app: tauri::AppHandle) -> Settings {
+    let config = load_config(&app);
+    Settings {
+        advanced_mode: config.advanced_mode,
+        check_updates_on_launch: config.check_updates_on_launch,
+    }
+}
+
+#[tauri::command]
+fn set_advanced_mode(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    update_config(&app, |config| config.advanced_mode = enabled)
+}
+
+#[tauri::command]
+fn set_check_updates_on_launch(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    update_config(&app, |config| config.check_updates_on_launch = enabled)
 }
 
 #[tauri::command]
@@ -182,10 +176,7 @@ fn dismiss_update_prompt(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("system clock error: {}", e))?
         .as_secs() as i64;
 
-    let mut config = load_config(&app);
-    config.update_prompt_dismissed_at = Some(now);
-    save_config(&app, &config);
-    Ok(())
+    update_config(&app, |config| config.update_prompt_dismissed_at = Some(now))
 }
 
 #[tauri::command]
@@ -324,6 +315,9 @@ fn main() {
             get_helper_status,
             get_quick_sets,
             save_quick_set,
+            get_settings,
+            set_advanced_mode,
+            set_check_updates_on_launch,
             save_last_interface,
             get_last_interface,
             check_for_update,

@@ -5,9 +5,8 @@
 
 use serde::Serialize;
 
-// Compiled here only for its tests; build.rs uses it to stamp IHWIP_BUILD_UTC.
-#[cfg(test)]
-mod utc;
+// Also used by build.rs (to stamp IHWIP_BUILD_UTC) and config.rs (backup names).
+pub(crate) mod utc;
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct BuildInfo {
