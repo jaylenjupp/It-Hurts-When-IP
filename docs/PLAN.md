@@ -105,10 +105,10 @@ Every phase ends with a **draft release** (see `docs/RELEASING.md`) and a "what 
 - Config migration: new `AppConfig` fields with defaults; old config files load unchanged.
 
 **Acceptance**
-- [ ] `cargo test` covers: old config JSON (v1.13.1 shape) loads with new defaults; advanced flag round-trips
-- [ ] `npm run build:web` passes
-- [ ] Uninstall/Repair entries moved into Settings → Maintenance; temporary button removed
-- [ ] Draft release + owner visual check list (480/800 px, light/dark) recorded
+- [x] `cargo test` covers: old config JSON (v1.13.1 shape) loads with new defaults; advanced flag round-trips
+- [x] `npm run build:web` passes
+- [x] Uninstall/Repair entries moved into Settings → Maintenance; temporary button removed
+- [ ] Draft release (done 2026-11-19, `dev-v1.13.1-20261119-2316-3bd73ce`) + owner visual check list (480/800 px; light/dark N/A — app stays dark-only, P4-D2) recorded — for Jay
 
 ---
 
