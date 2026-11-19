@@ -1404,7 +1404,12 @@ document.addEventListener("keydown", (e) => {
 // builds never run it (enforced in Rust): they return the command. The app
 // never restarts the Mac: it only says when a restart is needed.
 //
-// States: closed · choose · loading · pick · plan · running · done · refused · error · debug.
+// The Full network reset tier is only offered with Settings → Advanced on
+// (P4-D1; Rust refuses it too). Each open re-reads the settings first; a
+// failed read counts as Advanced off.
+//
+// States: closed · opening (reading settings, overlay still hidden) · choose ·
+// loading · pick · plan · running · done · refused · error · debug.
 // A dismissed password prompt goes back to the plan with a calm banner.
 
 const REPAIR_RESET_WORD = "RESET";
@@ -1442,6 +1447,7 @@ const repair = {
   banner: "",
   canGoBack: false,
   focusKey: "",
+  advanced: false, // Settings → Advanced, read when the modal opens
   seq: 0,
   overlay: document.getElementById("repair-modal-overlay"),
   modal: document.getElementById("repair-modal"),
@@ -1454,9 +1460,24 @@ function repairCanClose() {
   return repair.state !== "closed" && repair.state !== "running";
 }
 
-function openRepair() {
+async function openRepair() {
   if (repair.state !== "closed" || rescue.state !== "closed" || diag.state !== "closed") return;
   repairReset();
+  repair.advanced = false;
+  repair.state = "opening"; // blocks the other flows while the settings are read
+  const mySeq = ++repair.seq;
+  let advanced = false;
+  try {
+    const settings = await invoke("get_settings");
+    if (settings) {
+      applyLoadedSettings(settings);
+      advanced = settings.advanced_mode === true;
+    }
+  } catch (e) {
+    console.warn("[get_settings failed, Repair treats Advanced as off]", e);
+  }
+  if (mySeq !== repair.seq || repair.state !== "opening") return; // closed meanwhile
+  repair.advanced = advanced;
   repair.overlay.classList.remove("hidden");
   repair.state = "choose";
   renderRepair();
@@ -1743,6 +1764,10 @@ function repairStepText(s) {
 function renderRepairChoose(body) {
   body.appendChild(rescueEl("p", "", "Choose how much to repair. You see the exact plan before anything changes."));
   REPAIR_TIERS.forEach((t) => {
+    if (t.tier === "full" && !repair.advanced) {
+      body.appendChild(rescueEl("p", "rescue-muted", "Full network reset: turn on Advanced mode in Settings."));
+      return;
+    }
     const card = rescueEl("button", "repair-tier" + (t.tier === "full" ? " repair-tier-danger" : ""));
     card.type = "button";
     card.dataset.key = "tier:" + t.tier;
@@ -2288,6 +2313,107 @@ function renderSettingsBuildInfo(result) {
   }
 }
 
+// --- Settings → Advanced: details view ---
+//
+// Read-only facts from get_diagnostics, shown only while Advanced is on.
+// Filled when Settings opens with Advanced on and right after turning it on;
+// emptied and hidden when it goes off. Reopening Settings is the retry.
+
+const advancedDetail = { seq: 0 };
+
+const ADVANCED_HELPER_STATE_TEXT = {
+  ok: "running",
+  missing: "not installed",
+  not_running: "not running",
+  no_permission: "no permission (not an admin account)",
+  old_helper: "old helper",
+  version_mismatch: "different version from the app",
+  dev_build: "dev build: not contacted",
+};
+
+const ADVANCED_JOURNAL_STATE_TEXT = {
+  dev_build: "dev build: helper not contacted",
+  not_available: "not available",
+  none: "nothing recorded yet",
+  ok: "ok",
+  unusable: "unusable",
+  unreadable: "could not be read",
+};
+
+function advancedDetailRow(list, label, value) {
+  const row = document.createElement("div");
+  row.className = "settings-detail-row";
+  row.appendChild(rescueEl("dt", "settings-detail-label", label));
+  row.appendChild(rescueEl("dd", "settings-detail-value", value || "—"));
+  list.appendChild(row);
+}
+
+function advancedDetailLists(d) {
+  const out = [];
+  const group = (title) => {
+    const list = document.createElement("dl");
+    list.className = "settings-detail-list";
+    out.push(rescueEl("div", "settings-detail-title", title), list);
+    return list;
+  };
+
+  const app = d.app || {};
+  const appList = group("App build");
+  advancedDetailRow(appList, "Version", app.version);
+  advancedDetailRow(appList, "Git SHA", app.git_sha ? app.git_sha + (app.dirty ? " (modified)" : "") : "");
+  advancedDetailRow(appList, "Built", settingsFormatUtc(app.built_utc));
+  advancedDetailRow(appList, "Type", app.build_type);
+
+  const helper = d.helper || {};
+  const helperList = group("Helper");
+  advancedDetailRow(helperList, "Status", ADVANCED_HELPER_STATE_TEXT[helper.state] || helper.state);
+  if (helper.helper_version) advancedDetailRow(helperList, "Version", helper.helper_version);
+  if (helper.git_sha) advancedDetailRow(helperList, "Git SHA", helper.git_sha);
+  if (helper.message) advancedDetailRow(helperList, "Note", helper.message);
+
+  const journal = d.journal || {};
+  const journalList = group("Change journal");
+  advancedDetailRow(journalList, "State", ADVANCED_JOURNAL_STATE_TEXT[journal.state] || journal.state);
+  if (journal.detail) advancedDetailRow(journalList, "Reason", journal.detail);
+  (journal.services || []).forEach((e) => advancedDetailRow(journalList, e.service, "recorded " + settingsFormatUtc(e.recorded_at)));
+
+  const settings = d.settings || {};
+  const configList = group("Config");
+  advancedDetailRow(configList, "Folder", settings.config_folder);
+  advancedDetailRow(configList, "config.json", settings.config_json_exists ? "exists" : "missing (defaults in use)");
+  return out;
+}
+
+function clearAdvancedDetail() {
+  advancedDetail.seq++; // drop a load still on its way
+  settingsUi.advancedDetail.replaceChildren();
+  settingsUi.advancedDetail.classList.add("hidden");
+}
+
+// Shows the details if Advanced is on, else clears them. Passes the main
+// window's interface like Copy diagnostics does.
+async function refreshAdvancedDetail() {
+  if (!settingsUi.open || !settingsState.advanced_mode) {
+    clearAdvancedDetail();
+    return;
+  }
+  const el = settingsUi.advancedDetail;
+  const mySeq = ++advancedDetail.seq;
+  el.replaceChildren(rescueEl("p", "settings-muted", "Loading details…"));
+  el.classList.remove("hidden");
+  let result;
+  try {
+    result = await invoke("get_diagnostics", { selectedService: interfaceSelect.value || null });
+    if (!result) throw new Error("no reply");
+  } catch (error) {
+    if (mySeq !== advancedDetail.seq) return;
+    el.replaceChildren(rescueEl("p", "settings-error", "Couldn't load details: " + error));
+    return;
+  }
+  if (mySeq !== advancedDetail.seq) return;
+  el.replaceChildren(...advancedDetailLists(result));
+}
+
 function renderSettingsToggles() {
   settingsUi.checkUpdates.checked = settingsState.check_updates_on_launch;
   settingsUi.advanced.checked = settingsState.advanced_mode;
@@ -2318,6 +2444,7 @@ async function loadSettingsPanel() {
     renderSettingsToggles();
     settingsSetTogglesEnabled(true);
     settingsShowStatus("", false);
+    refreshAdvancedDetail();
   } else {
     const reason = settings.status === "rejected" ? String(settings.reason) : "no reply";
     settingsShowStatus(
@@ -2349,6 +2476,7 @@ function closeSettings() {
   settingsUi.open = false;
   settingsUi.seq++; // drop a load still on its way
   hideAdvancedConfirm(false);
+  clearAdvancedDetail();
   settingsUi.overlay.classList.add("hidden");
   settingsUi.container.inert = false;
   settingsUi.gear.focus();
@@ -2402,13 +2530,14 @@ function onAdvancedToggle() {
     showAdvancedConfirm();
     return;
   }
+  clearAdvancedDetail();
   saveSetting(
     "set_advanced_mode",
     "advanced_mode",
     false,
     settingsUi.advanced,
     settingsUi.advancedError,
-  );
+  ).then(refreshAdvancedDetail);
 }
 
 async function confirmAdvancedOn() {
@@ -2420,6 +2549,7 @@ async function confirmAdvancedOn() {
     settingsUi.advanced,
     settingsUi.advancedError,
   );
+  refreshAdvancedDetail();
 }
 
 settingsUi.gear.addEventListener("click", openSettings);
@@ -2461,6 +2591,14 @@ document.addEventListener("keydown", (e) => {
 
 // Initialize once the DOM is ready
 document.addEventListener("DOMContentLoaded", () => updateModal.init());
+
+// Settings known from the start (Repair can be opened from the app menu
+// before Settings was ever opened). A failed read leaves the defaults.
+invoke("get_settings")
+  .then((value) => {
+    if (value) applyLoadedSettings(value);
+  })
+  .catch((e) => console.warn("[get_settings at startup failed]", e));
 
 // These two must always be last
 loadInterfaces();

@@ -1,6 +1,6 @@
 # Testing draft builds on the travel Mac
 
-Everything here runs **on your travel MacBook**, by you. Claude never installs or runs network changes; it builds, you test. (Exception: Phase 3 testing happens on the Mac Studio, by you, see *Phase 3 — network repair*.)
+Everything here runs **on your travel MacBook**, by you. Claude never installs or runs network changes; it builds, you test. (Exception: Phase 3 and Phase 4 testing happen on the Mac Studio, by you, see *Phase 3 — network repair* and *Phase 4 — Settings*.)
 
 **Download this file and the rescue script before you start testing**, so you have them if the network goes away.
 
@@ -141,7 +141,7 @@ The Mac Studio is also the machine the Claude session runs on. If a step takes i
 Every repair saves its backup to `/Users/Shared/ItHurtsWhenIP-backups/<UTC time>/` (one folder per run, kept): `plan.txt`, `rescue.log` (the full result), `network-before.txt`, plus `service-before.txt` (service reset) or `system-configuration/` with `SHA256SUMS` (full reset).
 
 #### In the app (Mac Studio, the app)
-Open **It Hurts When IP → Repair Network…** in the menu bar, or **Repair network…** at the bottom of the window. Every tier shows its plan first; nothing changes until you confirm and enter your password.
+Open **It Hurts When IP → Repair Network…** in the menu bar, or **Settings → Maintenance → Repair network…** (from Phase 4 on; the Phase 3 draft had the button at the bottom of the window). Every tier shows its plan first; nothing changes until you confirm and enter your password.
 
 1. **Soft refresh.** Choose **Soft refresh**. The plan lists: clear the DNS cache, restart the DNS responder, and "ask for a fresh address" for each enabled adapter on DHCP; static, disabled and unplugged adapters are listed as left alone. Click **Refresh network** → password → **Repair finished** with a *Done* list, the backup folder and the full-result path.
    - Expected: adapters on DHCP show "working, automatic (DHCP), <ip> / <mask>". An adapter with no cable or no DHCP server shows in amber under **Needs a look**: "No address yet — check cable/switch/DHCP server" (or "only a self-assigned 169.254 address"). That is a warning, not a failure.
@@ -158,7 +158,7 @@ Open **It Hurts When IP → Repair Network…** in the menu bar, or **Repair net
      sudo networksetup -setdnsservers "<test service>" <dns1> <dns2>
      sudo networksetup -setsearchdomains "<test service>" <domain>
      ```
-4. **Full network reset — only if you choose to, and last** (after every other test is reported and the session has pushed its work). Choose **Full network reset**, read the consequences, type `RESET`, click **Reset network settings** → password.
+4. **Full network reset — only if you choose to, and last** (after every other test is reported and the session has pushed its work). From Phase 4 on, turn on **Settings → Advanced** first; without it the tier isn't offered (the Terminal script's `--repair full` below doesn't need it). Choose **Full network reset**, read the consequences, type `RESET`, click **Reset network settings** → password.
    - Expected: *Done* lists the backup of each file, "Write the backup checksums", "Move <file> to the backup" and "moved, backup copy checked" per file. A **Restart needed** panel says to restart from the Apple menu; there is no restart button, and the network keeps working until you restart. On macOS 26 `com.apple.network.identification.plist` doesn't exist; it shows as not present (normal).
    - Check (Mac Studio, Terminal): `ls "/Users/Shared/ItHurtsWhenIP-backups/<UTC time>/system-configuration/"` lists the moved files and `SHA256SUMS`.
    - Then restart (Apple menu → Restart…). Afterwards every service, static IP, Location and the service order are rebuilt from scratch; rejoin Wi-Fi if needed.
@@ -197,6 +197,25 @@ The examples use `~/Downloads/ithurtswhenip-rescue.command`; the in-app copy is 
    (Menu item `7` does the same and lists the backups newest first.) Type `RESTORE`. Expected: the current files are backed up first to a **new** backup folder, then `OK RESTORE file …`, `VERIFY ok restore:<file> matches SHA256SUMS, mode 644`, and last `RESTART needed … RESTART NEEDED: …`. Restart the Mac yourself; your old services, static IPs and Locations are back. If anything doesn't match its checksum the script refuses and changes nothing.
 
 Paste every output into the session.
+
+### Phase 4 — Settings
+**Where:** Jay's **Mac Studio** (P3-D6), in the installed app. Nothing in this list changes the network: don't confirm any repair or uninstall here (those are covered by Phase 3 and the uninstall section).
+
+**Before installing** (Mac Studio, the app you have now, v1.13.1): note your four quick sets (names, IPs). Then install the draft (see *Installing*).
+
+1. **Config kept:** open the app. The quick sets are exactly the ones you noted.
+2. **Open Settings** three ways: the gear next to "Network Interface"; **It Hurts When IP → Settings…** in the menu bar; ⌘, (comma). ✕ and Esc close it.
+3. **Widths:** drag the window to its narrowest (480 px) and widest (800 px). Settings has no sideways scrolling; at 800 px labels sit left and controls right.
+4. **Footer:** the bottom of the main window has no Repair or Uninstall buttons any more.
+5. **Modals from Settings:** Settings → **Repair network…** opens Repair on top of Settings; Esc closes it and you're back in Settings. Same for **Uninstall…** (Esc on the plan; don't confirm) and **Copy diagnostics…**.
+6. **Advanced confirm:** tick **Advanced mode** → "Advanced options can change more of your network. Turn on?" → **Cancel** keeps it off. Tick again → **Turn on** → stays on. Quit the app (⌘Q), reopen, open Settings: still on. Untick it (no confirm) before step 7.
+7. **Advanced off → no full reset:** with Advanced off, open **Repair Network…** from the menu bar. Only *Soft refresh* and *Reset one service* are offered, then a grey line: "Full network reset: turn on Advanced mode in Settings." Cancel.
+8. **Advanced on → full reset offered:** turn Advanced on, open **Repair Network…** again: **Full network reset** (red) is back as the third choice. Open it to see the plan and the `RESET` box if you like, then **Cancel** (don't type RESET).
+9. **Advanced details:** with Advanced on, Settings → Advanced shows "Loading details…", then: App build (version, git SHA, built time, release), Helper (status, version), Change journal (state and each recorded service with its time), Config (folder path, config.json exists). You can select and copy a value. Turn Advanced off: the details disappear.
+10. **Copy diagnostics:** Settings → **Copy diagnostics…** → **Copy** → paste into TextEdit. Check it has the headings App, System, Helper, Journal, Network services, Selected service, Settings, and that Journal lists the services the app has changed (the release build asks the helper).
+11. **Update check off:** untick **Check for updates when the app opens**, quit (⌘Q), reopen: no update popup. Tick it again afterwards. (The popup only ever shows when a newer published release exists, so this check only proves something while one does.)
+
+Paste anything unexpected (with a screenshot) into the session.
 
 ## Manual Terminal fallback (no app, no script)
 Use this when the app and the rescue script can't help (or you don't have the script). Every step runs on **any Mac, Terminal** and uses only macOS built-ins. Work down the list and stop when the network works. Use the service name exactly as listed in step 1, in quotes.

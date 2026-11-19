@@ -256,30 +256,52 @@ async fn rescue_uninstall(
 
 // --- Repair network (rescue script; never the helper) ---
 
+/// Settings → Advanced gates the full network reset in the app (owner
+/// decision P4-D1). The rescue script's own Terminal `--repair full` is not
+/// gated: recovery never depends on the app.
+fn full_reset_gate(tier: &str, advanced_mode: bool) -> Result<(), String> {
+    if tier == "full" && !advanced_mode {
+        return Err(String::from(
+            "Full network reset is only available with Advanced mode on (Settings → Advanced).",
+        ));
+    }
+    Ok(())
+}
+
 /// Read-only repair plan: tier "soft" | "service" (with `service`) | "full".
+/// "full" needs Advanced mode on.
 #[tauri::command]
 async fn repair_plan(
+    app: tauri::AppHandle,
     tier: String,
     service: Option<String>,
 ) -> Result<platform::RepairPlan, String> {
-    tauri::async_runtime::spawn_blocking(move || platform::repair_plan(tier, service))
-        .await
-        .map_err(|e| format!("The repair plan could not be made: {}", e))?
+    tauri::async_runtime::spawn_blocking(move || {
+        full_reset_gate(&tier, load_config(&app).advanced_mode)?;
+        platform::repair_plan(tier, service)
+    })
+    .await
+    .map_err(|e| format!("The repair plan could not be made: {}", e))?
 }
 
 /// Re-checks the tier against a fresh plan (a full reset also needs
 /// `confirm` == the typed word RESET), then runs the repair with one macOS
 /// administrator prompt (release builds; debug builds only return the
-/// command). Never restarts the Mac.
+/// command). Never restarts the Mac. "full" needs Advanced mode on; with it
+/// off nothing runs.
 #[tauri::command]
 async fn repair_run(
+    app: tauri::AppHandle,
     tier: String,
     service: Option<String>,
     confirm: String,
 ) -> Result<platform::RepairRun, String> {
-    tauri::async_runtime::spawn_blocking(move || platform::repair_run(tier, service, confirm))
-        .await
-        .map_err(|e| format!("The repair could not be started: {}", e))?
+    tauri::async_runtime::spawn_blocking(move || {
+        full_reset_gate(&tier, load_config(&app).advanced_mode)?;
+        platform::repair_run(tier, service, confirm)
+    })
+    .await
+    .map_err(|e| format!("The repair could not be started: {}", e))?
 }
 
 /// "Finish and quit" after an uninstall, so the rescue script can remove the
@@ -428,4 +450,31 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::full_reset_gate;
+
+    #[test]
+    fn full_reset_refused_with_advanced_off() {
+        let err = full_reset_gate("full", false).unwrap_err();
+        assert_eq!(
+            err,
+            "Full network reset is only available with Advanced mode on (Settings → Advanced)."
+        );
+    }
+
+    #[test]
+    fn full_reset_allowed_with_advanced_on() {
+        assert_eq!(full_reset_gate("full", true), Ok(()));
+    }
+
+    #[test]
+    fn soft_and_service_allowed_either_way() {
+        for tier in ["soft", "service"] {
+            assert_eq!(full_reset_gate(tier, false), Ok(()));
+            assert_eq!(full_reset_gate(tier, true), Ok(()));
+        }
+    }
 }
