@@ -10,6 +10,7 @@
 :root {
   --ihw-bg: #2a2a2c;
   --ihw-surface: #1e1e1e;
+  --ihw-surface-2: #2c2c2c;
   --ihw-border: #3a3a3c;
   --ihw-fg: #f0f0f0;
   --ihw-muted: #8e8e93;
@@ -541,7 +542,7 @@ input.invalid {
 .signature {
   display: flex;
   flex-direction: row;
-  flex-wrap: wrap; /* only wraps if the temporary buttons don't fit at 480 px */
+  flex-wrap: wrap;
   row-gap: 4px;
   align-items: baseline;
   justify-content: flex-end;
@@ -569,49 +570,6 @@ input.invalid {
   font-size: 9px;
   color: #444;
   letter-spacing: 0.03em;
-}
-
-/* TEMPORARY (Phase 1): the "Uninstall…" text button by the signature moves
-   into Settings → Maintenance in Phase 4. */
-.signature-uninstall {
-  pointer-events: auto; /* .signature itself ignores the mouse */
-  margin-right: auto;   /* left end of the signature row */
-  display: inline;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  font-size: 11px;
-  color: #5a5a5a;
-  letter-spacing: 0.03em;
-}
-
-.signature-uninstall:hover,
-.signature-uninstall:active {
-  background: transparent;
-  color: #aaa;
-  text-decoration: underline;
-}
-
-/* TEMPORARY (Phase 3): "Repair network…", left of "Uninstall…"; moves into
-   Settings → Maintenance in Phase 4. Same look as .signature-uninstall. */
-.signature-repair {
-  pointer-events: auto;
-  display: inline;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  font-size: 11px;
-  color: #5a5a5a;
-  letter-spacing: 0.03em;
-}
-
-.signature-repair:hover,
-.signature-repair:active {
-  background: transparent;
-  color: #aaa;
-  text-decoration: underline;
 }
 
 .interface-row {
@@ -1088,5 +1046,310 @@ label.repair-pick-label {
 .repair-restart-title {
   font-size: 14px;
   font-weight: 700;
+  color: var(--ihw-fg);
+}
+
+/* --- Settings panel (main.js openSettings) ---
+   Full-window panel under the update (1000) and uninstall/repair (1100)
+   modals. Dark only (P4-D2), built from the --ihw-* tokens. */
+
+.section-head {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-gear {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ihw-muted);
+  cursor: pointer;
+}
+
+.settings-gear:hover {
+  background: var(--ihw-surface-2);
+  color: var(--ihw-fg);
+}
+
+.settings-gear:focus-visible {
+  outline: none;
+  border-color: var(--ihw-accent);
+  color: var(--ihw-fg);
+}
+
+#settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: var(--ihw-surface);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#settings-overlay.hidden {
+  display: none;
+}
+
+#settings-overlay::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+#settings-panel {
+  box-sizing: border-box;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ihw-gap);
+  color: var(--ihw-fg);
+  outline: none;
+}
+
+body[data-platform="windows"] #settings-overlay {
+  top: 32px; /* keep the custom titlebar visible */
+}
+
+.settings-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#settings-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.settings-status {
+  font-size: 12px;
+  color: var(--ihw-muted);
+}
+
+.settings-status.settings-status-error {
+  color: var(--ihw-danger);
+}
+
+.settings-status.hidden,
+.settings-error.hidden,
+.settings-confirm.hidden,
+#settings-advanced-detail.hidden {
+  display: none;
+}
+
+.settings-section {
+  background: var(--ihw-surface-2);
+  border: 1px solid var(--ihw-border);
+  border-radius: var(--ihw-radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ihw-muted);
+}
+
+/* 480 px: label above control. >= 640 px: label left, control right. */
+.settings-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-row-label {
+  font-size: 13px;
+  color: var(--ihw-fg);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-value {
+  font-size: 13px;
+  color: var(--ihw-fg);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.settings-selectable {
+  user-select: text;
+}
+
+.settings-muted {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ihw-muted);
+}
+
+.settings-note {
+  display: block;
+  margin-top: 2px;
+}
+
+/* The global label style is the small uppercase field label; toggles here
+   read as normal sentences. */
+label.settings-toggle {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ihw-fg);
+  cursor: pointer;
+}
+
+.settings-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--ihw-accent);
+  cursor: pointer;
+}
+
+.settings-toggle input[type="checkbox"]:disabled,
+.settings-toggle input[type="checkbox"]:disabled + span {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.settings-button {
+  min-height: 32px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--ihw-border);
+  background: var(--ihw-bg);
+  color: var(--ihw-fg);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.settings-button:hover:not(:disabled) {
+  background: var(--ihw-border);
+}
+
+.settings-button:focus-visible {
+  outline: none;
+  border-color: var(--ihw-accent);
+}
+
+.settings-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-button-primary {
+  background: var(--ihw-accent);
+  border-color: var(--ihw-accent);
+  color: #fff;
+}
+
+.settings-button-primary:hover:not(:disabled) {
+  background: var(--ihw-accent);
+  filter: brightness(1.1);
+}
+
+.settings-button-danger {
+  background: transparent;
+  border-color: var(--ihw-danger);
+  color: var(--ihw-danger);
+}
+
+.settings-button-danger:hover:not(:disabled) {
+  background: var(--ihw-danger-bg);
+  border-color: var(--ihw-danger-bg);
+  color: #fff;
+}
+
+.settings-button-danger:focus-visible {
+  border-color: var(--ihw-danger);
+  box-shadow: 0 0 0 2px var(--ihw-accent);
+}
+
+/* Uninstall sits apart from the other maintenance actions. */
+.settings-danger-zone {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ihw-border);
+}
+
+.settings-error {
+  font-size: 12px;
+  color: var(--ihw-danger);
+  overflow-wrap: anywhere;
+}
+
+.settings-confirm {
+  border: 1px solid var(--ihw-warn);
+  border-radius: var(--ihw-radius);
+  background: var(--ihw-bg);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-confirm p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ihw-fg);
+}
+
+.settings-confirm-buttons {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (min-width: 640px) {
+  .settings-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    column-gap: 16px;
+  }
+
+  .settings-value {
+    text-align: right;
+  }
+}
+
+#settings-close {
+  width: 28px;
+  height: 28px;
+  font-size: 13px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+#settings-close:focus-visible {
+  outline: none;
+  border-color: var(--ihw-accent);
   color: var(--ihw-fg);
 }

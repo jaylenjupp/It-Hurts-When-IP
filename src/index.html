@@ -25,7 +25,12 @@
       <div id="helper-banner" class="helper-banner hidden" role="status" aria-live="polite"></div>
 
       <div class="section">
-        <label for="interface-select">Network Interface</label>
+        <div class="section-head">
+          <label for="interface-select">Network Interface</label>
+          <button type="button" id="open-settings" class="settings-gear" aria-label="Settings" title="Settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
         <div class="interface-row">
           <select id="interface-select">
             <option>Loading interfaces...</option>
@@ -157,9 +162,6 @@
       <div class="status-bar" id="status-bar">Ready</div>
       
      <div class="signature">
-        <!-- TEMPORARY (Phase 1/3): these buttons move into Settings → Maintenance in Phase 4. -->
-        <button type="button" id="open-repair" class="signature-repair">Repair network…</button>
-        <button type="button" id="open-uninstall" class="signature-uninstall">Uninstall…</button>
         <span class="signature-title">IT HURTS WHEN IP</span>
         <span class="signature-by">by Jaylen Jupp</span>
         <span class="signature-version">1.13.1</span>
@@ -194,6 +196,83 @@
           <button id="update-modal-download" class="primary">Download</button>
         </div>
       </div>
+    </div>
+
+    <!-- Settings: in-window full panel (main.js openSettings/closeSettings).
+         Sits under the update, uninstall and repair modals, which open on top
+         of it. -->
+    <div id="settings-overlay" class="hidden">
+      <section id="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
+        <div class="settings-header">
+          <h2 id="settings-title">Settings</h2>
+          <button type="button" class="close-btn" id="settings-close" aria-label="Close settings">✕</button>
+        </div>
+
+        <div id="settings-status" class="settings-status hidden" role="status" aria-live="polite"></div>
+
+        <div class="settings-section" aria-labelledby="settings-general-title">
+          <h3 id="settings-general-title" class="settings-section-title">General</h3>
+          <div class="settings-row">
+            <label class="settings-row-label settings-toggle" for="settings-check-updates">
+              <input type="checkbox" id="settings-check-updates" disabled />
+              <span>Check for updates when the app opens</span>
+            </label>
+          </div>
+          <div id="settings-check-updates-error" class="settings-error hidden" role="alert"></div>
+        </div>
+
+        <div class="settings-section" aria-labelledby="settings-updates-title">
+          <h3 id="settings-updates-title" class="settings-section-title">Updates</h3>
+          <div class="settings-row">
+            <span class="settings-row-label">Current version</span>
+            <span class="settings-value" id="settings-build-version">—</span>
+          </div>
+          <div class="settings-row">
+            <span class="settings-row-label">Build</span>
+            <span class="settings-value settings-selectable" id="settings-build-stamp">—</span>
+          </div>
+          <p class="settings-muted">Update controls arrive in a later version.</p>
+        </div>
+
+        <div class="settings-section" aria-labelledby="settings-maintenance-title">
+          <h3 id="settings-maintenance-title" class="settings-section-title">Maintenance</h3>
+          <div class="settings-row">
+            <span class="settings-row-label">Fix a stuck or broken network connection</span>
+            <button type="button" id="settings-repair" class="settings-button">Repair network…</button>
+          </div>
+          <div class="settings-row">
+            <span class="settings-row-label">
+              Diagnostics for a bug report
+              <span class="settings-muted settings-note">Arrives in the next build</span>
+            </span>
+            <button type="button" id="settings-copy-diagnostics" class="settings-button" disabled>Copy diagnostics…</button>
+          </div>
+          <div class="settings-row settings-danger-zone">
+            <span class="settings-row-label">Remove the app and its helper</span>
+            <button type="button" id="settings-uninstall" class="settings-button settings-button-danger">Uninstall…</button>
+          </div>
+        </div>
+
+        <div class="settings-section" aria-labelledby="settings-advanced-title">
+          <h3 id="settings-advanced-title" class="settings-section-title">Advanced</h3>
+          <div class="settings-row">
+            <label class="settings-row-label settings-toggle" for="settings-advanced">
+              <input type="checkbox" id="settings-advanced" disabled />
+              <span>Advanced mode</span>
+            </label>
+          </div>
+          <p class="settings-muted">Shows the full network reset in Repair network and extra diagnostic details.</p>
+          <div id="settings-advanced-confirm" class="settings-confirm hidden" role="alertdialog" aria-labelledby="settings-advanced-confirm-text">
+            <p id="settings-advanced-confirm-text">Advanced options can change more of your network. Turn on?</p>
+            <div class="settings-confirm-buttons">
+              <button type="button" id="settings-advanced-cancel" class="settings-button">Cancel</button>
+              <button type="button" id="settings-advanced-turn-on" class="settings-button settings-button-primary">Turn on</button>
+            </div>
+          </div>
+          <div id="settings-advanced-error" class="settings-error hidden" role="alert"></div>
+          <div id="settings-advanced-detail" class="hidden"></div>
+        </div>
+      </section>
     </div>
 
     <!-- Uninstall modal: the rescue script's plan, a confirm, the macOS password

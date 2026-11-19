@@ -299,9 +299,11 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .menu(platform::app_menu)
         .on_menu_event(|app, event| {
-            // The menu items only open the Uninstall / Repair window;
-            // nothing else happens until the user confirms there.
-            if event.id() == platform::MENU_UNINSTALL_ID {
+            // The menu items only open Settings or the Uninstall / Repair
+            // window; nothing else happens until the user confirms there.
+            if event.id() == platform::MENU_SETTINGS_ID {
+                app.emit("settings-open", ()).ok();
+            } else if event.id() == platform::MENU_UNINSTALL_ID {
                 app.emit("rescue-open", ()).ok();
             } else if event.id() == platform::MENU_REPAIR_ID {
                 app.emit("repair-open", ()).ok();

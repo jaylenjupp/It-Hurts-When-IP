@@ -112,13 +112,38 @@ pub fn get_helper_status() -> HelperStatus {
 
 // --- App menu ---
 
+/// Id of the "Settings…" menu item (⌘,).
+pub const MENU_SETTINGS_ID: &str = "ihwip-settings";
 /// Id of the "Uninstall It Hurts When IP…" menu item.
 pub const MENU_UNINSTALL_ID: &str = "ihwip-uninstall";
 /// Id of the "Repair Network…" menu item.
 pub const MENU_REPAIR_ID: &str = "ihwip-repair";
 
-/// Tauri's default macOS menu, plus "Uninstall It Hurts When IP…" and
-/// "Repair Network…" in the app menu, after About.
+/// What goes into the app submenu, and where.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppMenuEntry {
+    Settings,
+    Uninstall,
+    Repair,
+    Separator,
+}
+
+/// Insertions into Tauri's default app submenu (About, separator, Services,
+/// …), applied in this order. Result:
+/// 0 About · 1 separator · 2 Settings… · 3 separator ·
+/// 4 Uninstall It Hurts When IP… · 5 Repair Network… · 6 separator ·
+/// 7 Services …
+const APP_MENU_INSERTS: [(AppMenuEntry, usize); 5] = [
+    (AppMenuEntry::Settings, 2),
+    (AppMenuEntry::Separator, 3),
+    (AppMenuEntry::Uninstall, 4),
+    (AppMenuEntry::Repair, 5),
+    (AppMenuEntry::Separator, 6),
+];
+
+/// Tauri's default macOS menu, plus "Settings…" (⌘,), "Uninstall It Hurts
+/// When IP…" and "Repair Network…" in the app menu, after About (see
+/// `APP_MENU_INSERTS`).
 pub fn app_menu<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
 ) -> tauri::Result<tauri::menu::Menu<R>> {
@@ -126,26 +151,43 @@ pub fn app_menu<R: tauri::Runtime>(
 
     let menu = Menu::default(handle)?;
     if let Some(MenuItemKind::Submenu(app_submenu)) = menu.items()?.first() {
-        let uninstall = MenuItem::with_id(
-            handle,
-            MENU_UNINSTALL_ID,
-            "Uninstall It Hurts When IP…",
-            true,
-            None::<&str>,
-        )?;
-        let repair = MenuItem::with_id(
-            handle,
-            MENU_REPAIR_ID,
-            "Repair Network…",
-            true,
-            None::<&str>,
-        )?;
-        // Default app menu: About, separator, Services, … Insert after the
-        // first separator: About, separator, Uninstall…, Repair Network…,
-        // separator, Services.
-        app_submenu.insert(&uninstall, 2)?;
-        app_submenu.insert(&repair, 3)?;
-        app_submenu.insert(&PredefinedMenuItem::separator(handle)?, 4)?;
+        for (entry, index) in APP_MENU_INSERTS {
+            match entry {
+                AppMenuEntry::Settings => app_submenu.insert(
+                    &MenuItem::with_id(
+                        handle,
+                        MENU_SETTINGS_ID,
+                        "Settings…",
+                        true,
+                        Some("CmdOrCtrl+,"),
+                    )?,
+                    index,
+                )?,
+                AppMenuEntry::Uninstall => app_submenu.insert(
+                    &MenuItem::with_id(
+                        handle,
+                        MENU_UNINSTALL_ID,
+                        "Uninstall It Hurts When IP…",
+                        true,
+                        None::<&str>,
+                    )?,
+                    index,
+                )?,
+                AppMenuEntry::Repair => app_submenu.insert(
+                    &MenuItem::with_id(
+                        handle,
+                        MENU_REPAIR_ID,
+                        "Repair Network…",
+                        true,
+                        None::<&str>,
+                    )?,
+                    index,
+                )?,
+                AppMenuEntry::Separator => {
+                    app_submenu.insert(&PredefinedMenuItem::separator(handle)?, index)?
+                }
+            }
+        }
     }
     Ok(menu)
 }
@@ -680,5 +722,31 @@ mod tests {
             err.starts_with("Could not run /abs/path/to/fake-networksetup"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn app_menu_inserts_give_the_agreed_order() {
+        // Insert indices must be consecutive from 2 (right after About and
+        // its separator), so the inserted block keeps exactly this order.
+        let entries: Vec<AppMenuEntry> = APP_MENU_INSERTS.iter().map(|(e, _)| *e).collect();
+        assert_eq!(
+            entries,
+            vec![
+                AppMenuEntry::Settings,
+                AppMenuEntry::Separator,
+                AppMenuEntry::Uninstall,
+                AppMenuEntry::Repair,
+                AppMenuEntry::Separator,
+            ]
+        );
+        let indices: Vec<usize> = APP_MENU_INSERTS.iter().map(|(_, i)| *i).collect();
+        assert_eq!(indices, vec![2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn app_menu_ids_are_stable() {
+        assert_eq!(MENU_SETTINGS_ID, "ihwip-settings");
+        assert_eq!(MENU_UNINSTALL_ID, "ihwip-uninstall");
+        assert_eq!(MENU_REPAIR_ID, "ihwip-repair");
     }
 }

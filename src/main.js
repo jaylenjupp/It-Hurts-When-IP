@@ -817,8 +817,8 @@ const updateModal = {
 
 // --- Uninstall modal (rescue script) ---
 //
-// Opened from the app menu ("Uninstall It Hurts When IP…") and the temporary
-// button by the signature; both only open this modal in the loading state.
+// Opened from the app menu ("Uninstall It Hurts When IP…") and Settings →
+// Maintenance; both only open this modal in the loading state.
 // It shows the rescue script's plan (read-only), lets the user tick Manual
 // services to switch to DHCP and/or restoring the recorded settings, re-plans
 // after every change so the list shown is what will run, and runs the
@@ -890,6 +890,7 @@ function closeRescue() {
   rescue.replanning = false;
   rescue.overlay.classList.add("hidden");
   rescue.modal.dataset.state = "closed";
+  settingsRefocus("settings-uninstall");
 }
 
 // Fetches a fresh plan for the current choices. Stale replies are dropped.
@@ -1387,7 +1388,6 @@ function renderRescue() {
   if (target) target.focus();
 }
 
-document.getElementById("open-uninstall").addEventListener("click", openRescue);
 listen("rescue-open", () => openRescue()).catch((e) => console.error("[rescue-open listen failed]", e));
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || rescue.state === "closed") return;
@@ -1397,8 +1397,8 @@ document.addEventListener("keydown", (e) => {
 
 // --- Repair network modal (rescue script --repair) ---
 //
-// Opened from the app menu ("Repair Network…") and the temporary button by
-// the signature; never while the uninstall modal is open (and the other way
+// Opened from the app menu ("Repair Network…") and Settings → Maintenance;
+// never while the uninstall modal is open (and the other way
 // round). Flow: choose a tier -> the script's read-only plan -> confirm (a
 // full reset needs RESET typed) -> macOS password prompt -> result. Debug
 // builds never run it (enforced in Rust): they return the command. The app
@@ -1482,6 +1482,7 @@ function closeRepair() {
   repair.state = "closed";
   repair.overlay.classList.add("hidden");
   repair.modal.dataset.state = "closed";
+  settingsRefocus("settings-repair");
 }
 
 // Back to the three tiers; forgets the plan and the typed word.
@@ -2025,12 +2026,276 @@ function renderRepair() {
   if (target && !target.disabled) target.focus();
 }
 
-document.getElementById("open-repair").addEventListener("click", openRepair);
 listen("repair-open", () => openRepair()).catch((e) => console.error("[repair-open listen failed]", e));
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || repair.state === "closed") return;
   e.preventDefault();
   if (repairCanClose()) closeRepair();
+});
+
+// --- Settings panel ---
+//
+// In-window full panel, opened from the gear (#open-settings), the app menu
+// ("Settings…", ⌘, — the menu accelerator, so no JS shortcut here) and closed
+// with ✕ or Esc. Never opens while the uninstall or repair modal is open; those
+// modals open on top of it and hand focus back to their Settings button when
+// they close. Every open re-reads the settings (that is also the retry after
+// a load error). A saved setting is just the toggle position: no toasts.
+
+// Current settings for other parts of the UI (4.4 reads advanced_mode).
+// `loaded` is false until a get_settings call has succeeded.
+const settingsState = {
+  loaded: false,
+  advanced_mode: false,
+  check_updates_on_launch: true,
+};
+
+const settingsListeners = [];
+
+// Calls fn(settingsState) after every successful load or save. The same
+// change is also sent as a window "ihw-settings-change" event.
+function onSettingsChange(fn) {
+  settingsListeners.push(fn);
+}
+
+function notifySettingsChange() {
+  for (const fn of settingsListeners) {
+    try {
+      fn(settingsState);
+    } catch (e) {
+      console.error("[settings listener failed]", e);
+    }
+  }
+  window.dispatchEvent(new CustomEvent("ihw-settings-change", { detail: { ...settingsState } }));
+}
+
+const settingsUi = {
+  open: false,
+  seq: 0,
+  container: document.querySelector(".container"),
+  gear: document.getElementById("open-settings"),
+  overlay: document.getElementById("settings-overlay"),
+  panel: document.getElementById("settings-panel"),
+  status: document.getElementById("settings-status"),
+  checkUpdates: document.getElementById("settings-check-updates"),
+  checkUpdatesError: document.getElementById("settings-check-updates-error"),
+  buildVersion: document.getElementById("settings-build-version"),
+  buildStamp: document.getElementById("settings-build-stamp"),
+  advanced: document.getElementById("settings-advanced"),
+  advancedError: document.getElementById("settings-advanced-error"),
+  advancedDetail: document.getElementById("settings-advanced-detail"),
+  confirm: document.getElementById("settings-advanced-confirm"),
+  confirmCancel: document.getElementById("settings-advanced-cancel"),
+  confirmTurnOn: document.getElementById("settings-advanced-turn-on"),
+};
+
+function settingsShowStatus(text, isError) {
+  settingsUi.status.textContent = text;
+  settingsUi.status.classList.toggle("settings-status-error", !!isError);
+  settingsUi.status.classList.toggle("hidden", !text);
+}
+
+function settingsShowError(el, text) {
+  el.textContent = text;
+  el.classList.toggle("hidden", !text);
+}
+
+function settingsSetTogglesEnabled(enabled) {
+  settingsUi.checkUpdates.disabled = !enabled;
+  settingsUi.advanced.disabled = !enabled;
+}
+
+// "2026-11-19T14:03:00Z" -> "2026-11-19 14:03:00 UTC"
+function settingsFormatUtc(utc) {
+  if (!utc) return "";
+  return String(utc).replace("T", " ").replace(/Z$/, " UTC");
+}
+
+function settingsBuildStampText(info) {
+  const parts = [];
+  if (info.git_sha) parts.push(info.git_sha + (info.dirty ? " (modified)" : ""));
+  if (info.built_utc) parts.push("built " + settingsFormatUtc(info.built_utc));
+  return parts.join(" · ") || "—";
+}
+
+function renderSettingsBuildInfo(result) {
+  if (result.status === "fulfilled" && result.value) {
+    settingsUi.buildVersion.textContent = result.value.version || "—";
+    settingsUi.buildStamp.textContent = settingsBuildStampText(result.value);
+  } else {
+    settingsUi.buildVersion.textContent = "Unavailable";
+    settingsUi.buildStamp.textContent = "Unavailable";
+  }
+}
+
+function renderSettingsToggles() {
+  settingsUi.checkUpdates.checked = settingsState.check_updates_on_launch;
+  settingsUi.advanced.checked = settingsState.advanced_mode;
+  settingsUi.advancedDetail.classList.toggle("hidden", !settingsState.advanced_mode);
+}
+
+function applyLoadedSettings(value) {
+  settingsState.loaded = true;
+  settingsState.advanced_mode = value.advanced_mode === true;
+  settingsState.check_updates_on_launch = value.check_updates_on_launch !== false;
+  notifySettingsChange();
+}
+
+async function loadSettingsPanel() {
+  const mySeq = ++settingsUi.seq;
+  settingsSetTogglesEnabled(false);
+  settingsShowStatus("Loading settings…", false);
+  settingsUi.buildVersion.textContent = "…";
+  settingsUi.buildStamp.textContent = "…";
+  const [settings, build] = await Promise.allSettled([
+    invoke("get_settings"),
+    invoke("get_build_info"),
+  ]);
+  if (mySeq !== settingsUi.seq || !settingsUi.open) return; // closed or reopened meanwhile
+  renderSettingsBuildInfo(build);
+  if (settings.status === "fulfilled" && settings.value) {
+    applyLoadedSettings(settings.value);
+    renderSettingsToggles();
+    settingsSetTogglesEnabled(true);
+    settingsShowStatus("", false);
+  } else {
+    const reason = settings.status === "rejected" ? String(settings.reason) : "no reply";
+    settingsShowStatus(
+      "Couldn't load settings: " + reason + ". Close Settings and open it again to retry.",
+      true,
+    );
+  }
+  // Focus moved to the panel on open; land on the first control once it's usable.
+  if (document.activeElement === settingsUi.panel && !settingsUi.checkUpdates.disabled) {
+    settingsUi.checkUpdates.focus();
+  }
+}
+
+function openSettings() {
+  if (settingsUi.open) return;
+  if (rescue.state !== "closed" || repair.state !== "closed") return; // one flow at a time
+  settingsUi.open = true;
+  hideAdvancedConfirm(false);
+  settingsShowError(settingsUi.checkUpdatesError, "");
+  settingsShowError(settingsUi.advancedError, "");
+  settingsUi.overlay.classList.remove("hidden");
+  settingsUi.container.inert = true; // keep Tab inside the panel
+  settingsUi.panel.focus();
+  loadSettingsPanel();
+}
+
+function closeSettings() {
+  if (!settingsUi.open) return;
+  settingsUi.open = false;
+  settingsUi.seq++; // drop a load still on its way
+  hideAdvancedConfirm(false);
+  settingsUi.overlay.classList.add("hidden");
+  settingsUi.container.inert = false;
+  settingsUi.gear.focus();
+}
+
+// Called when the uninstall / repair modal closes: if Settings is still
+// open underneath, put focus back on the button that opened the modal.
+function settingsRefocus(id) {
+  if (!settingsUi.open) return;
+  const el = document.getElementById(id);
+  if (el) el.focus();
+}
+
+// Saves one setting. On failure the checkbox goes back to `previous` and the
+// error is shown under it.
+async function saveSetting(command, key, value, input, errorEl) {
+  const previous = settingsState[key];
+  settingsShowError(errorEl, "");
+  input.disabled = true;
+  try {
+    await invoke(command, { enabled: value });
+    settingsState[key] = value;
+    notifySettingsChange();
+  } catch (e) {
+    settingsState[key] = previous;
+    settingsShowError(errorEl, "Couldn't save: " + e);
+  }
+  renderSettingsToggles();
+  input.disabled = false;
+}
+
+function showAdvancedConfirm() {
+  settingsUi.confirm.classList.remove("hidden");
+  settingsUi.advanced.disabled = true;
+  settingsUi.confirmCancel.focus();
+}
+
+function hideAdvancedConfirm(refocus) {
+  const wasOpen = !settingsUi.confirm.classList.contains("hidden");
+  settingsUi.confirm.classList.add("hidden");
+  if (!wasOpen) return;
+  settingsUi.advanced.disabled = !settingsState.loaded;
+  if (refocus) settingsUi.advanced.focus();
+}
+
+function onAdvancedToggle() {
+  if (settingsUi.advanced.checked) {
+    // Turning on needs the confirm first; stay off until "Turn on".
+    settingsUi.advanced.checked = false;
+    settingsShowError(settingsUi.advancedError, "");
+    showAdvancedConfirm();
+    return;
+  }
+  saveSetting(
+    "set_advanced_mode",
+    "advanced_mode",
+    false,
+    settingsUi.advanced,
+    settingsUi.advancedError,
+  );
+}
+
+async function confirmAdvancedOn() {
+  hideAdvancedConfirm(true);
+  await saveSetting(
+    "set_advanced_mode",
+    "advanced_mode",
+    true,
+    settingsUi.advanced,
+    settingsUi.advancedError,
+  );
+}
+
+settingsUi.gear.addEventListener("click", openSettings);
+document.getElementById("settings-close").addEventListener("click", closeSettings);
+listen("settings-open", () => openSettings()).catch((e) =>
+  console.error("[settings-open listen failed]", e),
+);
+settingsUi.checkUpdates.addEventListener("change", () =>
+  saveSetting(
+    "set_check_updates_on_launch",
+    "check_updates_on_launch",
+    settingsUi.checkUpdates.checked,
+    settingsUi.checkUpdates,
+    settingsUi.checkUpdatesError,
+  ),
+);
+settingsUi.advanced.addEventListener("change", onAdvancedToggle);
+settingsUi.confirmCancel.addEventListener("click", () => hideAdvancedConfirm(true));
+settingsUi.confirmTurnOn.addEventListener("click", confirmAdvancedOn);
+document.getElementById("settings-repair").addEventListener("click", openRepair);
+document.getElementById("settings-uninstall").addEventListener("click", openRescue);
+
+// Esc: the uninstall / repair modals handle their own Esc (they run first and
+// call preventDefault). If the update modal popped up over Settings, Esc does
+// nothing here (same as outside Settings: no dismiss, no snooze) and Settings
+// stays open. Otherwise the Advanced confirm (= Cancel), then Settings itself.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !settingsUi.open) return;
+  if (e.defaultPrevented || rescue.state !== "closed" || repair.state !== "closed") return;
+  if (updateModal.overlay && !updateModal.overlay.classList.contains("hidden")) return;
+  e.preventDefault();
+  if (!settingsUi.confirm.classList.contains("hidden")) {
+    hideAdvancedConfirm(true);
+    return;
+  }
+  closeSettings();
 });
 
 // Initialize once the DOM is ready
@@ -2045,7 +2310,8 @@ loadQuickSets();
 // Runs after a short delay so it doesn't compete with the rest of the app's
 // startup (loading interfaces, restoring last-used interface, etc).
 //
-// Network call always happens — catches the "no internet on first launch
+// Network call happens on every launch unless "Check for updates when the
+// app opens" is off in Settings — catches the "no internet on first launch
 // of the day, internet on second launch" case.
 //
 // Popup suppression is separate: if the user dismissed the popup within
@@ -2056,6 +2322,15 @@ const LAUNCH_CHECK_DELAY_MS = 1000;
 
 async function runLaunchUpdateCheck() {
   const { invoke } = window.__TAURI__.core;
+
+  // Settings → General: "Check for updates when the app opens". If the
+  // setting can't be read, check as before.
+  try {
+    const settings = await invoke("get_settings");
+    if (settings && settings.check_updates_on_launch === false) return;
+  } catch (e) {
+    console.warn("[get_settings failed, checking for updates anyway]", e);
+  }
 
   try {
     const info = await invoke("check_for_update");
