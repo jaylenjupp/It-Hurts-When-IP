@@ -693,11 +693,12 @@ input.invalid {
   background: #1f8eff;
   border-color: #1f8eff;
 }
-/* --- Uninstall modal (rescue script) ---
+/* --- Uninstall, repair and diagnostics modals ---
    Same look as the update modal; colours come from the --ihw-* tokens. */
 
 #rescue-modal-overlay,
-#repair-modal-overlay {
+#repair-modal-overlay,
+#diag-modal-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.75);
@@ -708,12 +709,14 @@ input.invalid {
 }
 
 #rescue-modal-overlay.hidden,
-#repair-modal-overlay.hidden {
+#repair-modal-overlay.hidden,
+#diag-modal-overlay.hidden {
   display: none;
 }
 
 #rescue-modal,
-#repair-modal {
+#repair-modal,
+#diag-modal {
   background: var(--ihw-bg);
   border: 1px solid var(--ihw-border);
   border-radius: 12px;
@@ -728,7 +731,8 @@ input.invalid {
 }
 
 #rescue-modal-title,
-#repair-modal-title {
+#repair-modal-title,
+#diag-modal-title {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
@@ -737,7 +741,8 @@ input.invalid {
 }
 
 #rescue-modal-body,
-#repair-modal-body {
+#repair-modal-body,
+#diag-modal-body {
   min-height: 0;
   overflow-y: auto;
   display: flex;
@@ -749,7 +754,8 @@ input.invalid {
 }
 
 #rescue-modal-buttons,
-#repair-modal-buttons {
+#repair-modal-buttons,
+#diag-modal-buttons {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -757,7 +763,8 @@ input.invalid {
 }
 
 #rescue-modal-buttons button,
-#repair-modal-buttons button {
+#repair-modal-buttons button,
+#diag-modal-buttons button {
   flex-direction: row;
   padding: 8px 12px;
   border-radius: 6px;
@@ -769,7 +776,8 @@ input.invalid {
 }
 
 #rescue-modal-buttons button:hover:not(:disabled),
-#repair-modal-buttons button:hover:not(:disabled) {
+#repair-modal-buttons button:hover:not(:disabled),
+#diag-modal-buttons button:hover:not(:disabled) {
   background: #48484a;
   border-color: #5a5a5c;
 }
@@ -788,13 +796,15 @@ input.invalid {
 }
 
 #rescue-modal-buttons button.rescue-primary,
-#repair-modal-buttons button.rescue-primary {
+#repair-modal-buttons button.rescue-primary,
+#diag-modal-buttons button.rescue-primary {
   background: var(--ihw-accent);
   border-color: var(--ihw-accent);
 }
 
 #rescue-modal-buttons button.rescue-primary:hover:not(:disabled),
-#repair-modal-buttons button.rescue-primary:hover:not(:disabled) {
+#repair-modal-buttons button.rescue-primary:hover:not(:disabled),
+#diag-modal-buttons button.rescue-primary:hover:not(:disabled) {
   background: #1f8eff;
   border-color: #1f8eff;
 }
@@ -803,7 +813,8 @@ input.invalid {
 #rescue-modal input:disabled,
 #repair-modal button:disabled,
 #repair-modal input:disabled,
-#repair-modal select:disabled {
+#repair-modal select:disabled,
+#diag-modal button:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -1352,4 +1363,46 @@ label.settings-toggle {
   outline: none;
   border-color: var(--ihw-accent);
   color: var(--ihw-fg);
+}
+
+/* --- Copy diagnostics modal ---
+   Read-only report text. Scrolls inside itself; its max-height keeps the
+   whole modal inside the 580 px minimum window height. */
+
+.diag-text {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  height: 320px;
+  max-height: calc(100vh - 230px);
+  resize: none;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--ihw-border);
+  background: var(--ihw-surface);
+  color: var(--ihw-fg);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.diag-text:focus {
+  outline: 2px solid var(--ihw-accent);
+  outline-offset: -1px;
+}
+
+/* "Couldn't copy automatically…" under the text. */
+.diag-copy-note {
+  color: var(--ihw-warn);
+}
+
+.diag-copy-note.hidden {
+  display: none;
 }

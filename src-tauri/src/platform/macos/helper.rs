@@ -264,6 +264,12 @@ pub mod socket {
 
     /// Connect and ping with a 2 s read/write timeout.
     pub fn probe() -> (ConnectOutcome, Option<String>) {
+        query(&ping_request())
+    }
+
+    /// Connect and send one read-only request (ping, journal_status) with a
+    /// 2 s read/write timeout. Never use this for writes (see `send`).
+    pub fn query(request: &serde_json::Value) -> (ConnectOutcome, Option<String>) {
         let stream = match UnixStream::connect(HELPER_SOCKET) {
             Ok(s) => s,
             Err(e) => return (connect_outcome(&e), None),
@@ -274,10 +280,7 @@ pub mod socket {
         if timeouts.is_err() {
             return (ConnectOutcome::Connected, None);
         }
-        (
-            ConnectOutcome::Connected,
-            exchange(&stream, &ping_request()).ok(),
-        )
+        (ConnectOutcome::Connected, exchange(&stream, request).ok())
     }
 }
 

@@ -13,6 +13,7 @@
 // by IHWIP_NETWORKSETUP (the fake) or are refused. The build host runs a real
 // root helper, so a dev build must never be able to reach it.
 
+mod diagnostics;
 mod helper;
 mod parse;
 mod repair;
@@ -27,6 +28,9 @@ pub use rescue::{rescue_plan, rescue_uninstall, RescuePlan, RescueRun};
 pub use repair::{repair_plan, repair_run, RepairPlan, RepairRun};
 
 pub use helper::HelperStatus;
+
+// Settings → Maintenance → Copy diagnostics (read-only).
+pub use diagnostics::{get_diagnostics, Diagnostics, DiagnosticsConfig};
 
 const SYSTEM_NETWORKSETUP: &str = "/usr/sbin/networksetup";
 

@@ -241,11 +241,8 @@
             <button type="button" id="settings-repair" class="settings-button">Repair network…</button>
           </div>
           <div class="settings-row">
-            <span class="settings-row-label">
-              Diagnostics for a bug report
-              <span class="settings-muted settings-note">Arrives in the next build</span>
-            </span>
-            <button type="button" id="settings-copy-diagnostics" class="settings-button" disabled>Copy diagnostics…</button>
+            <span class="settings-row-label">Diagnostics for a bug report</span>
+            <button type="button" id="settings-copy-diagnostics" class="settings-button">Copy diagnostics…</button>
           </div>
           <div class="settings-row settings-danger-zone">
             <span class="settings-row-label">Remove the app and its helper</span>
@@ -296,6 +293,18 @@
         <h2 id="repair-modal-title">Repair network</h2>
         <div id="repair-modal-body"></div>
         <div id="repair-modal-buttons"></div>
+      </div>
+    </div>
+
+    <!-- Copy diagnostics modal: read-only report text from get_diagnostics,
+         a Copy button and Close. main.js renders the body and buttons for
+         each state (data-state on #diag-modal). Never open at the same time
+         as the uninstall or repair modal. -->
+    <div id="diag-modal-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="diag-modal-title">
+      <div id="diag-modal" data-state="closed">
+        <h2 id="diag-modal-title">Diagnostics</h2>
+        <div id="diag-modal-body"></div>
+        <div id="diag-modal-buttons"></div>
       </div>
     </div>
   </body>

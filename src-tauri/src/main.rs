@@ -86,6 +86,29 @@ async fn get_helper_status() -> Result<platform::HelperStatus, String> {
         .map_err(|e| format!("The helper status could not be checked: {}", e))
 }
 
+/// Read-only diagnostics text (and fields) for Settings → Maintenance →
+/// Copy diagnostics. Release builds ask the helper for its journal status
+/// (2 s timeout); debug builds never contact it.
+#[tauri::command]
+async fn get_diagnostics(
+    app: tauri::AppHandle,
+    selected_service: Option<String>,
+) -> Result<platform::Diagnostics, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = load_config(&app);
+        platform::get_diagnostics(
+            selected_service,
+            platform::DiagnosticsConfig {
+                config_path: get_config_path(&app),
+                advanced_mode: config.advanced_mode,
+                check_updates_on_launch: config.check_updates_on_launch,
+            },
+        )
+    })
+    .await
+    .map_err(|e| format!("Diagnostics could not be collected: {}", e))
+}
+
 #[tauri::command]
 fn get_quick_sets(app: tauri::AppHandle) -> serde_json::Value {
     let config = load_config(&app);
@@ -315,6 +338,7 @@ fn main() {
             set_dhcp,
             set_static_ip,
             get_helper_status,
+            get_diagnostics,
             get_quick_sets,
             save_quick_set,
             get_settings,

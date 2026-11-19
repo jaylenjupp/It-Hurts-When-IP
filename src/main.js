@@ -872,7 +872,7 @@ function rescueCanClose() {
 }
 
 function openRescue() {
-  if (rescue.state !== "closed" || repair.state !== "closed") return; // one flow at a time
+  if (rescue.state !== "closed" || repair.state !== "closed" || diag.state !== "closed") return; // one flow at a time
   rescue.plan = null;
   rescue.picks = new Set();
   rescue.restore = false;
@@ -1455,7 +1455,7 @@ function repairCanClose() {
 }
 
 function openRepair() {
-  if (repair.state !== "closed" || rescue.state !== "closed") return;
+  if (repair.state !== "closed" || rescue.state !== "closed" || diag.state !== "closed") return;
   repairReset();
   repair.overlay.classList.remove("hidden");
   repair.state = "choose";
@@ -2033,6 +2033,166 @@ document.addEventListener("keydown", (e) => {
   if (repairCanClose()) closeRepair();
 });
 
+// --- Copy diagnostics modal ---
+//
+// Opened from Settings → Maintenance → "Copy diagnostics…". Shows the
+// read-only report from get_diagnostics (Rust builds the text) and copies it
+// with navigator.clipboard. Never open together with the uninstall or repair
+// modal. Nothing here changes anything.
+//
+// States: closed · loading · shown · error.
+
+const DIAG_COPY_FAILED = "Couldn't copy automatically — the text is selected, press ⌘C";
+const DIAG_COPIED_MS = 2000;
+
+const diag = {
+  state: "closed",
+  text: "",
+  message: "",
+  seq: 0,
+  copiedTimer: 0,
+  textEl: null,
+  copyButton: null,
+  copyNote: null,
+  overlay: document.getElementById("diag-modal-overlay"),
+  modal: document.getElementById("diag-modal"),
+  title: document.getElementById("diag-modal-title"),
+  body: document.getElementById("diag-modal-body"),
+  buttons: document.getElementById("diag-modal-buttons"),
+};
+
+function openDiagnostics() {
+  if (diag.state !== "closed" || rescue.state !== "closed" || repair.state !== "closed") return;
+  diag.overlay.classList.remove("hidden");
+  loadDiagnostics();
+}
+
+function closeDiagnostics() {
+  if (diag.state === "closed") return;
+  diag.seq++; // drop a report still on its way
+  clearTimeout(diag.copiedTimer);
+  diag.state = "closed";
+  diag.text = "";
+  diag.textEl = diag.copyButton = diag.copyNote = null;
+  diag.overlay.classList.add("hidden");
+  diag.modal.dataset.state = "closed";
+  diag.body.replaceChildren();
+  diag.buttons.replaceChildren();
+  settingsRefocus("settings-copy-diagnostics");
+}
+
+// Also the Retry after an error. Passes the main window's interface.
+async function loadDiagnostics() {
+  const mySeq = ++diag.seq;
+  diag.state = "loading";
+  diag.text = "";
+  diag.message = "";
+  renderDiagnostics();
+  const selected = interfaceSelect.value || null;
+  try {
+    const result = await invoke("get_diagnostics", { selectedService: selected });
+    if (mySeq !== diag.seq) return;
+    diag.text = result && typeof result.text === "string" ? result.text : "";
+    if (!diag.text) throw new Error("the report came back empty");
+    diag.state = "shown";
+  } catch (error) {
+    if (mySeq !== diag.seq) return;
+    diag.state = "error";
+    diag.message = String(error);
+  }
+  renderDiagnostics();
+}
+
+function selectDiagnosticsText() {
+  if (!diag.textEl) return;
+  diag.textEl.focus();
+  diag.textEl.select();
+}
+
+// Updates the Copy button and note in place, so the text keeps its scroll
+// position and selection.
+async function copyDiagnostics() {
+  if (diag.state !== "shown" || !diag.copyButton) return;
+  clearTimeout(diag.copiedTimer);
+  diag.copyNote.textContent = "";
+  diag.copyNote.classList.add("hidden");
+  try {
+    await navigator.clipboard.writeText(diag.text);
+  } catch (error) {
+    console.warn("[clipboard write failed]", error);
+    if (diag.state !== "shown" || !diag.copyNote) return;
+    diag.copyButton.textContent = "Copy";
+    diag.copyNote.textContent = DIAG_COPY_FAILED;
+    diag.copyNote.classList.remove("hidden");
+    selectDiagnosticsText();
+    return;
+  }
+  if (diag.state !== "shown" || !diag.copyButton) return;
+  diag.copyButton.textContent = "Copied";
+  diag.copiedTimer = setTimeout(() => {
+    if (diag.copyButton) diag.copyButton.textContent = "Copy";
+  }, DIAG_COPIED_MS);
+}
+
+function renderDiagnostics() {
+  const { body, buttons } = diag;
+  diag.modal.dataset.state = diag.state;
+  body.replaceChildren();
+  buttons.replaceChildren();
+  diag.textEl = diag.copyButton = diag.copyNote = null;
+  diag.title.textContent = "Diagnostics";
+  const close = rescueButton("Close", "", closeDiagnostics, "close");
+  let focus = close;
+
+  switch (diag.state) {
+    case "loading":
+      body.appendChild(rescueEl("p", "rescue-muted", "Collecting diagnostics…"));
+      buttons.appendChild(close);
+      buttons.appendChild(rescueButton("Copy", "rescue-primary", () => {}, "copy", true));
+      break;
+
+    case "shown": {
+      body.appendChild(rescueEl("p", "", "Includes your current network addresses. Check before sharing."));
+      const text = document.createElement("textarea");
+      text.className = "diag-text";
+      text.readOnly = true;
+      text.spellcheck = false;
+      text.value = diag.text;
+      text.setAttribute("aria-label", "Diagnostics text");
+      body.appendChild(text);
+      const note = rescueEl("p", "diag-copy-note hidden", "");
+      note.setAttribute("role", "status");
+      body.appendChild(note);
+      const copy = rescueButton("Copy", "rescue-primary", copyDiagnostics, "copy");
+      buttons.appendChild(close);
+      buttons.appendChild(copy);
+      diag.textEl = text;
+      diag.copyButton = copy;
+      diag.copyNote = note;
+      focus = copy;
+      break;
+    }
+
+    case "error": {
+      diag.title.textContent = "Diagnostics could not be collected";
+      body.appendChild(rescueEl("p", "rescue-error", diag.message));
+      body.appendChild(rescueEl("p", "", "Nothing was changed. Try again, or close and report the message above."));
+      const retry = rescueButton("Retry", "rescue-primary", loadDiagnostics, "retry");
+      buttons.appendChild(close);
+      buttons.appendChild(retry);
+      focus = retry;
+      break;
+    }
+  }
+  focus.focus();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || diag.state === "closed") return;
+  e.preventDefault();
+  closeDiagnostics();
+});
+
 // --- Settings panel ---
 //
 // In-window full panel, opened from the gear (#open-settings), the app menu
@@ -2173,7 +2333,7 @@ async function loadSettingsPanel() {
 
 function openSettings() {
   if (settingsUi.open) return;
-  if (rescue.state !== "closed" || repair.state !== "closed") return; // one flow at a time
+  if (rescue.state !== "closed" || repair.state !== "closed" || diag.state !== "closed") return; // one flow at a time
   settingsUi.open = true;
   hideAdvancedConfirm(false);
   settingsShowError(settingsUi.checkUpdatesError, "");
@@ -2281,14 +2441,15 @@ settingsUi.confirmCancel.addEventListener("click", () => hideAdvancedConfirm(tru
 settingsUi.confirmTurnOn.addEventListener("click", confirmAdvancedOn);
 document.getElementById("settings-repair").addEventListener("click", openRepair);
 document.getElementById("settings-uninstall").addEventListener("click", openRescue);
+document.getElementById("settings-copy-diagnostics").addEventListener("click", openDiagnostics);
 
-// Esc: the uninstall / repair modals handle their own Esc (they run first and
+// Esc: the uninstall / repair / diagnostics modals handle their own Esc (they run first and
 // call preventDefault). If the update modal popped up over Settings, Esc does
 // nothing here (same as outside Settings: no dismiss, no snooze) and Settings
 // stays open. Otherwise the Advanced confirm (= Cancel), then Settings itself.
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || !settingsUi.open) return;
-  if (e.defaultPrevented || rescue.state !== "closed" || repair.state !== "closed") return;
+  if (e.defaultPrevented || rescue.state !== "closed" || repair.state !== "closed" || diag.state !== "closed") return;
   if (updateModal.overlay && !updateModal.overlay.classList.contains("hidden")) return;
   e.preventDefault();
   if (!settingsUi.confirm.classList.contains("hidden")) {
