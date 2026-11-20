@@ -1,6 +1,6 @@
 # Testing draft builds on the travel Mac
 
-Everything here runs **on your travel MacBook**, by you. Claude never installs or runs network changes; it builds, you test. (Exception: Phase 3 and Phase 4 testing happen on the Mac Studio, by you, see *Phase 3 — network repair* and *Phase 4 — Settings*.)
+Everything here runs **on your travel MacBook**, by you. Claude never installs or runs network changes; it builds, you test. (Exception: Phase 3, 4 and 5 testing happen on the Mac Studio, by you, see *Phase 3 — network repair*, *Phase 4 — Settings* and *Phase 5 — Updates in Settings*.)
 
 **Download this file and the rescue script before you start testing**, so you have them if the network goes away.
 
@@ -216,6 +216,19 @@ Paste every output into the session.
 11. **Update check off:** untick **Check for updates when the app opens**, quit (⌘Q), reopen: no update popup. Tick it again afterwards. (The popup only ever shows when a newer published release exists, so this check only proves something while one does.)
 
 Paste anything unexpected (with a screenshot) into the session.
+
+### Phase 5 — Updates in Settings
+**Where:** Jay's **Mac Studio** (P3-D6), in the installed draft. Nothing here changes the network: Check now is one read-only request to GitHub. The draft is version 1.13.1, the same as the latest published release, so the expected answer is "up to date".
+
+1. **Opening is quiet:** open Settings. Updates shows Current version 1.13.1, the build line (git SHA + built time), Latest version **—** (or the version from an earlier Check now in this run of the app), and Last checked (**Never**, or the time of the last successful check, including the one the app makes when it opens). Opening Settings never contacts GitHub by itself.
+2. **Check now:** click **Check now**. The button reads "Checking…" and is greyed out for a moment, then: Latest version **v1.13.1**, status "You're up to date." in green, Last checked "Today HH:MM" (your local time, now). No update popup appears.
+3. **View changelog:** appears after the check; it opens the v1.13.1 release page in your browser.
+4. **Update check at app start off:** in General, untick **Check for updates when the app opens**. Check now still works (step 2 again). Tick it back afterwards.
+5. **Close and reopen:** close Settings (Esc) and open it again: the result from step 2 is still shown, and nothing is fetched again.
+6. **Widths:** at 480 px the buttons wrap onto a second line if they don't fit, with no sideways scrolling; at 800 px the labels sit left and the values right.
+7. **Offline (optional, skip unless it's easy):** only if the Mac Studio has another uplink the remote session doesn't need — **never** disconnect the connection the remote session uses. With no internet, Check now shows "Can't reach GitHub. Check your internet connection." in red, and Last checked stays as it was.
+
+**Not tested yet: Download / Open in Installer.** Those buttons only show up when a newer published release has a `.pkg`, so there is nothing to download from the 1.13.1 draft. How to test this is still open in `docs/PROGRESS.md`: wait for v1.14.0 (Phase 7), or a one-off local test build stamped 1.13.0 that updates to the published v1.13.1. When it's tested: **Download vX.Y.Z** → progress bar with "x.x of y.y MB" and **Cancel** (Cancel → "Download cancelled.", and the Download button is back) → "Checking the download…" → "Downloaded to ~/Downloads/ItHurtsWhenIP-X.Y.Z.pkg (checksum verified)" or "(checksum not published — size checked)" → **Open in Installer** → "Installer opened. Follow its steps; the app will be replaced." Installing it is the normal install (see *Installing*).
 
 ## Manual Terminal fallback (no app, no script)
 Use this when the app and the rescue script can't help (or you don't have the script). Every step runs on **any Mac, Terminal** and uses only macOS built-ins. Work down the list and stop when the network works. Use the service name exactly as listed in step 1, in quotes.

@@ -231,7 +231,30 @@
             <span class="settings-row-label">Build</span>
             <span class="settings-value settings-selectable" id="settings-build-stamp">—</span>
           </div>
-          <p class="settings-muted">Update controls arrive in a later version.</p>
+          <div class="settings-row">
+            <span class="settings-row-label">Latest version</span>
+            <span class="settings-value" id="settings-update-latest">—</span>
+          </div>
+          <div class="settings-row">
+            <span class="settings-row-label">Last checked</span>
+            <span class="settings-value" id="settings-update-last-checked">—</span>
+          </div>
+          <!-- Status, progress and buttons: main.js renderUpdates() (state in updatesUi). -->
+          <p id="settings-update-status" class="settings-update-status hidden" role="status" aria-live="polite"></p>
+          <div id="settings-update-progress" class="settings-update-progress hidden">
+            <div class="settings-progress-track" role="progressbar" aria-label="Download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div id="settings-update-progress-fill" class="settings-progress-fill"></div>
+            </div>
+            <span id="settings-update-progress-text" class="settings-muted settings-progress-text"></span>
+          </div>
+          <p id="settings-update-note" class="settings-muted settings-selectable settings-update-note hidden"></p>
+          <div class="settings-update-actions">
+            <button type="button" id="settings-update-check" class="settings-button">Check now</button>
+            <button type="button" id="settings-update-download" class="settings-button settings-button-primary hidden">Download</button>
+            <button type="button" id="settings-update-open" class="settings-button settings-button-primary hidden">Open in Installer</button>
+            <button type="button" id="settings-update-cancel" class="settings-button hidden">Cancel</button>
+            <button type="button" id="settings-update-changelog" class="settings-button hidden">View changelog</button>
+          </div>
         </div>
 
         <div class="settings-section" aria-labelledby="settings-maintenance-title">

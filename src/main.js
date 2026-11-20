@@ -2433,12 +2433,13 @@ async function loadSettingsPanel() {
   settingsShowStatus("Loading settings…", false);
   settingsUi.buildVersion.textContent = "…";
   settingsUi.buildStamp.textContent = "…";
-  const [settings, build] = await Promise.allSettled([
+  renderUpdates(); // last known Updates state; opening never checks GitHub
+  const [settings, status] = await Promise.allSettled([
     invoke("get_settings"),
-    invoke("get_build_info"),
+    invoke("get_update_status"),
   ]);
   if (mySeq !== settingsUi.seq || !settingsUi.open) return; // closed or reopened meanwhile
-  renderSettingsBuildInfo(build);
+  applyUpdateStatus(status);
   if (settings.status === "fulfilled" && settings.value) {
     applyLoadedSettings(settings.value);
     renderSettingsToggles();
@@ -2572,6 +2573,343 @@ settingsUi.confirmTurnOn.addEventListener("click", confirmAdvancedOn);
 document.getElementById("settings-repair").addEventListener("click", openRepair);
 document.getElementById("settings-uninstall").addEventListener("click", openRescue);
 document.getElementById("settings-copy-diagnostics").addEventListener("click", openDiagnostics);
+
+// --- Settings → Updates ---
+//
+// Check now (check_for_update: never opens the launch popup and ignores its
+// 24 h suppression), Download vX.Y.Z (update_download, progress from the
+// update-progress event), Open in Installer (update_open_installer), View
+// changelog. State lives here, outside the panel, so closing Settings during
+// a download changes nothing and reopening shows where it got to. Opening
+// Settings never calls GitHub; only Check now and Download do.
+//
+// States: idle · checking · checked · check_error · downloading · verifying ·
+// downloaded · opening. `notice` replaces the default status line of a state
+// (download cancelled / failed, open failed).
+
+const updatesUi = {
+  state: "idle",
+  info: null, // last successful UpdateInfo
+  lastCheckedAt: null, // seconds since the epoch
+  checkError: null,
+  progress: null, // {received, total}
+  cancelling: false,
+  download: null, // DownloadResult {path, size, checksum, version}
+  opened: null, // OpenResult {kind: "opened"|"debug", ...}
+  notice: null, // {text, tone: "error"|"muted"}
+  blockDownload: false, // the download command said there is nothing to download
+  focusOwned: false, // the user last used one of the Updates buttons
+  section: document.getElementById("settings-updates-title").closest(".settings-section"),
+  latest: document.getElementById("settings-update-latest"),
+  lastChecked: document.getElementById("settings-update-last-checked"),
+  status: document.getElementById("settings-update-status"),
+  progressBox: document.getElementById("settings-update-progress"),
+  progressTrack: document.querySelector("#settings-update-progress .settings-progress-track"),
+  progressFill: document.getElementById("settings-update-progress-fill"),
+  progressText: document.getElementById("settings-update-progress-text"),
+  note: document.getElementById("settings-update-note"),
+  checkBtn: document.getElementById("settings-update-check"),
+  downloadBtn: document.getElementById("settings-update-download"),
+  openBtn: document.getElementById("settings-update-open"),
+  cancelBtn: document.getElementById("settings-update-cancel"),
+  changelogBtn: document.getElementById("settings-update-changelog"),
+};
+
+function updatesPad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+// Seconds since the epoch -> "Today 14:03", "Yesterday 09:12" or
+// "18 Nov 2026, 14:03" in local time.
+function updatesFormatLocal(secs) {
+  if (typeof secs !== "number" || !Number.isFinite(secs)) return "";
+  const d = new Date(secs * 1000);
+  const time = updatesPad2(d.getHours()) + ":" + updatesPad2(d.getMinutes());
+  const today = new Date();
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOfDay(today) - startOfDay(d)) / 86400000);
+  if (days === 0) return "Today " + time;
+  if (days === 1) return "Yesterday " + time;
+  const date = d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return date + ", " + time;
+}
+
+function updatesMb(bytes) {
+  return (Math.max(0, bytes || 0) / (1024 * 1024)).toFixed(1);
+}
+
+// "/Users/jay/Downloads/x.pkg" -> "~/Downloads/x.pkg"
+function updatesTildePath(path) {
+  return String(path || "").replace(/^\/Users\/[^/]+\//, "~/");
+}
+
+function updatesArgvText(argv) {
+  return (argv || []).map((a) => (/[\s"']/.test(a) ? '"' + String(a).replace(/"/g, '\\"') + '"' : a)).join(" ");
+}
+
+// Human text for a {kind, message, …} error from the update commands. The
+// rate-limit reset time is shown in local time.
+function updatesErrorText(e) {
+  if (e && typeof e === "object") {
+    if (e.kind === "rate_limited") {
+      return typeof e.reset_at === "number"
+        ? "GitHub is limiting update checks. Try again after " + updatesFormatLocal(e.reset_at) + "."
+        : "GitHub is limiting update checks. Try again later.";
+    }
+    if (e.message) return String(e.message);
+  }
+  return String(e || "Unknown error");
+}
+
+function updatesCanDownload() {
+  const info = updatesUi.info;
+  return !!(info && info.update_available && info.pkg && !updatesUi.blockDownload);
+}
+
+function updatesDownloadedText(d) {
+  const how = d.checksum === "verified" ? "checksum verified" : "checksum not published — size checked";
+  return "Downloaded to " + updatesTildePath(d.path) + " (" + how + ").";
+}
+
+// The status line for the current state: [text, tone].
+function updatesStatusLine() {
+  const u = updatesUi;
+  if (u.notice) return [u.notice.text, u.notice.tone];
+  switch (u.state) {
+    case "idle":
+      return ["", ""];
+    case "checking":
+      return ["Checking GitHub for updates…", "muted"];
+    case "check_error":
+      return [updatesErrorText(u.checkError), "error"];
+    case "downloading":
+      return [u.cancelling ? "Cancelling…" : u.progress ? "Downloading v" + u.info.latest_version + "…" : "Starting the download…", "muted"];
+    case "verifying":
+      return [u.cancelling ? "Cancelling…" : "Checking the download…", "muted"];
+    case "downloaded":
+    case "opening":
+      if (u.opened && u.opened.kind === "opened") {
+        return ["Installer opened. Follow its steps; the app will be replaced.", "ok"];
+      }
+      return [updatesDownloadedText(u.download), "ok"];
+    case "checked": {
+      const info = u.info;
+      if (!info) return ["", ""];
+      if (!info.update_available) return ["You're up to date.", "ok"];
+      if (!info.pkg) return ["This release has no macOS installer attached.", "info"];
+      return ["Version " + info.latest_version + " is available (" + updatesMb(info.pkg.size) + " MB installer).", "info"];
+    }
+  }
+  return ["", ""];
+}
+
+function updatesShow(el, visible) {
+  el.classList.toggle("hidden", !visible);
+}
+
+function renderUpdates() {
+  const u = updatesUi;
+  const busy = u.state === "checking" || u.state === "downloading" || u.state === "verifying";
+  const transferring = u.state === "downloading" || u.state === "verifying";
+  const haveDownload = u.state === "downloaded" || u.state === "opening";
+
+  u.latest.textContent = u.info ? "v" + u.info.latest_version : "—";
+  u.lastChecked.textContent = u.lastCheckedAt == null ? "Never" : updatesFormatLocal(u.lastCheckedAt);
+
+  const [text, tone] = updatesStatusLine();
+  u.status.textContent = text;
+  u.status.className = "settings-update-status" + (tone ? " is-" + tone : "") + (text ? "" : " hidden");
+
+  // Progress bar while transferring.
+  updatesShow(u.progressBox, transferring);
+  const p = u.progress;
+  const pct = p && p.total > 0 ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0;
+  u.progressFill.style.width = (u.state === "verifying" ? 100 : pct) + "%";
+  u.progressTrack.setAttribute("aria-valuenow", String(u.state === "verifying" ? 100 : pct));
+  u.progressText.textContent = p ? updatesMb(p.received) + " of " + updatesMb(p.total) + " MB" : "";
+
+  // Second line: where the file is once Installer opened, or the dev-build command.
+  let note = "";
+  if (haveDownload && u.opened && u.opened.kind === "opened") note = updatesDownloadedText(u.download);
+  if (haveDownload && u.opened && u.opened.kind === "debug") note = "Dev build: would run " + updatesArgvText(u.opened.would_run);
+  u.note.textContent = note;
+  updatesShow(u.note, !!note);
+
+  // Buttons.
+  u.checkBtn.disabled = busy;
+  u.checkBtn.textContent = u.state === "checking" ? "Checking…" : "Check now";
+
+  const showDownload = u.state === "checked" && updatesCanDownload();
+  updatesShow(u.downloadBtn, showDownload);
+  if (showDownload) u.downloadBtn.textContent = "Download v" + u.info.latest_version;
+
+  updatesShow(u.openBtn, haveDownload);
+  u.openBtn.disabled = u.state === "opening";
+  u.openBtn.textContent = u.state === "opening" ? "Opening…" : "Open in Installer";
+
+  updatesShow(u.cancelBtn, transferring);
+  u.cancelBtn.disabled = u.cancelling;
+
+  updatesShow(u.changelogBtn, !!(u.info && u.info.release_url));
+
+  updatesKeepFocus();
+}
+
+// If the focused Updates button just got hidden or disabled, move focus to
+// the next useful one instead of losing it.
+function updatesKeepFocus() {
+  const u = updatesUi;
+  if (!settingsUi.open || !u.focusOwned) return;
+  const a = document.activeElement;
+  const lost = !a || a === document.body || (u.section.contains(a) && (a.disabled || a.classList.contains("hidden")));
+  if (!lost) return;
+  const usable = (b) => !b.disabled && !b.classList.contains("hidden");
+  const pick = [u.cancelBtn, u.openBtn, u.downloadBtn, u.checkBtn, u.changelogBtn].find(usable);
+  if (pick) pick.focus();
+}
+
+// get_update_status reply (from loadSettingsPanel): version, build stamp,
+// last check time. No network.
+function applyUpdateStatus(result) {
+  if (result.status === "fulfilled" && result.value) {
+    const s = result.value;
+    const build = s.build || {};
+    renderSettingsBuildInfo({ status: "fulfilled", value: { ...build, version: s.current_version || build.version } });
+    if (typeof s.last_checked_at === "number" && (updatesUi.lastCheckedAt == null || s.last_checked_at > updatesUi.lastCheckedAt)) {
+      updatesUi.lastCheckedAt = s.last_checked_at;
+    }
+  } else {
+    renderSettingsBuildInfo(result);
+  }
+  renderUpdates();
+}
+
+async function updatesCheckNow() {
+  const u = updatesUi;
+  if (u.state === "checking" || u.state === "downloading" || u.state === "verifying") return;
+  u.state = "checking";
+  u.notice = null;
+  renderUpdates();
+  try {
+    const info = await invoke("check_for_update");
+    if (!info) throw new Error("no reply");
+    u.info = info;
+    u.checkError = null;
+    u.blockDownload = false;
+    if (typeof info.checked_at === "number") u.lastCheckedAt = info.checked_at;
+    // A verified download of this same version can still be opened.
+    if (u.download && info.update_available && u.download.version === info.latest_version) {
+      u.state = "downloaded";
+    } else {
+      u.download = null;
+      u.opened = null;
+      u.state = "checked";
+    }
+  } catch (e) {
+    u.checkError = e;
+    u.state = "check_error";
+  }
+  renderUpdates();
+}
+
+async function updatesDownload() {
+  const u = updatesUi;
+  if (u.state !== "checked" || !updatesCanDownload()) return;
+  u.state = "downloading";
+  u.progress = null;
+  u.cancelling = false;
+  u.notice = null;
+  u.download = null;
+  u.opened = null;
+  renderUpdates();
+  try {
+    const result = await invoke("update_download");
+    if (!result) throw new Error("no reply");
+    u.download = result;
+    u.state = "downloaded";
+  } catch (e) {
+    u.state = "checked";
+    if (e && e.kind === "cancelled") {
+      u.notice = { text: "Download cancelled.", tone: "muted" };
+    } else if (e && (e.kind === "no_update" || e.kind === "no_pkg")) {
+      u.blockDownload = true; // what we showed is out of date
+      u.notice = { text: updatesErrorText(e) + " Use Check now to refresh.", tone: "error" };
+    } else {
+      u.notice = { text: updatesErrorText(e), tone: "error" };
+    }
+  }
+  u.progress = null;
+  u.cancelling = false;
+  renderUpdates();
+}
+
+async function updatesCancel() {
+  const u = updatesUi;
+  if (u.state !== "downloading" && u.state !== "verifying") return;
+  u.cancelling = true;
+  renderUpdates();
+  try {
+    await invoke("update_cancel_download");
+  } catch (e) {
+    console.error("[update_cancel_download failed]", e);
+    u.cancelling = false;
+    renderUpdates();
+  }
+}
+
+async function updatesOpenInstaller() {
+  const u = updatesUi;
+  if (u.state !== "downloaded") return;
+  u.state = "opening";
+  u.notice = null;
+  renderUpdates();
+  try {
+    const result = await invoke("update_open_installer");
+    if (!result) throw new Error("no reply");
+    u.opened = result;
+    u.state = "downloaded";
+  } catch (e) {
+    if (e && e.kind === "not_downloaded") {
+      // The file is gone or changed: back to "Download vX.Y.Z".
+      u.download = null;
+      u.opened = null;
+      u.state = "checked";
+    } else {
+      u.state = "downloaded";
+    }
+    u.notice = { text: updatesErrorText(e), tone: "error" };
+  }
+  renderUpdates();
+}
+
+// One listener for the whole app run. Progress only moves a running
+// download forward (a late event can't undo "verifying" or "downloaded").
+listen("update-progress", (event) => {
+  const u = updatesUi;
+  const p = event && event.payload;
+  if (u.state !== "downloading" || !p) return;
+  u.progress = { received: Number(p.received) || 0, total: Number(p.total) || 0 };
+  if (u.progress.total > 0 && u.progress.received >= u.progress.total) u.state = "verifying";
+  renderUpdates();
+}).catch((e) => console.error("[update-progress listen failed]", e));
+
+for (const [btn, fn] of [
+  [updatesUi.checkBtn, updatesCheckNow],
+  [updatesUi.downloadBtn, updatesDownload],
+  [updatesUi.openBtn, updatesOpenInstaller],
+  [updatesUi.cancelBtn, updatesCancel],
+]) {
+  btn.addEventListener("click", () => {
+    updatesUi.focusOwned = true;
+    fn();
+  });
+}
+updatesUi.changelogBtn.addEventListener("click", () => {
+  if (updatesUi.info && updatesUi.info.release_url) openUrl(updatesUi.info.release_url);
+});
+document.addEventListener("focusin", (e) => {
+  if (!updatesUi.section.contains(e.target)) updatesUi.focusOwned = false;
+});
 
 // Esc: the uninstall / repair / diagnostics modals handle their own Esc (they run first and
 // call preventDefault). If the update modal popped up over Settings, Esc does

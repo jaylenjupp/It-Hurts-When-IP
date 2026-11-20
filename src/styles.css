@@ -1358,6 +1358,68 @@ label.settings-toggle {
   cursor: text;
 }
 
+/* Settings → Updates: status line, download progress, action buttons. */
+.settings-update-status {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ihw-muted);
+  overflow-wrap: anywhere;
+}
+
+.settings-update-status.is-ok {
+  color: var(--ihw-ok);
+}
+
+.settings-update-status.is-info {
+  color: var(--ihw-fg);
+}
+
+.settings-update-status.is-error {
+  color: var(--ihw-danger);
+}
+
+.settings-update-note {
+  overflow-wrap: anywhere;
+}
+
+.settings-update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ihw-bg);
+  border: 1px solid var(--ihw-border);
+  overflow: hidden;
+}
+
+.settings-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--ihw-accent);
+}
+
+.settings-progress-text {
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-update-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-update-status.hidden,
+.settings-update-progress.hidden,
+.settings-update-note.hidden,
+.settings-update-actions .hidden {
+  display: none;
+}
+
 .settings-confirm {
   border: 1px solid var(--ihw-warn);
   border-radius: var(--ihw-radius);
