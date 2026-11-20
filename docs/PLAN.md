@@ -121,9 +121,9 @@ Every phase ends with a **draft release** (see `docs/RELEASING.md`) and a "what 
 - Graceful states: offline, GitHub rate limit (403/429), no `.pkg` asset.
 
 **Acceptance**
-- [ ] Rust tests for version comparison incl. pre-release/odd tags (`dev-…` tags never count as newer), asset selection, error mapping
-- [ ] Update check uses only published releases (unauthenticated `/releases/latest`), never drafts
-- [ ] Draft release; owner tests "Check now" + "Update" against a published test scenario chosen with the owner
+- [x] Rust tests for version comparison incl. pre-release/odd tags (`dev-…` tags never count as newer), asset selection, error mapping
+- [x] Update check uses only published releases (unauthenticated `/releases/latest`), never drafts
+- [ ] Draft release (done 2026-11-20, `dev-v1.13.1-20261120-1125-45c20db`); owner tests "Check now" + "Update" against a published test scenario chosen with the owner — for Jay (scenario still to pick: v1.14.0 in Phase 7, or a one-off 1.13.0 test build)
 
 ---
 
