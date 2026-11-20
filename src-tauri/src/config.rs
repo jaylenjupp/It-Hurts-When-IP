@@ -76,6 +76,10 @@ pub struct AppConfig {
     /// Check GitHub for a newer release when the app starts. On by default.
     #[serde(default = "default_true")]
     pub check_updates_on_launch: bool,
+    /// When the last successful update check happened (seconds since the
+    /// Unix epoch). None until the first one.
+    #[serde(default)]
+    pub update_last_checked_at: Option<i64>,
 }
 
 // Hand-written so the defaults are visible in one place. New fields go in the
@@ -90,6 +94,7 @@ impl Default for AppConfig {
             update_prompt_dismissed_at: None,
             advanced_mode: false,
             check_updates_on_launch: default_true(),
+            update_last_checked_at: None,
         }
     }
 }
@@ -345,6 +350,7 @@ mod tests {
         assert_eq!(c.update_prompt_dismissed_at, None);
         assert!(!c.advanced_mode);
         assert!(c.check_updates_on_launch);
+        assert_eq!(c.update_last_checked_at, None);
     }
 
     #[test]
@@ -379,6 +385,7 @@ mod tests {
         assert_eq!(l.config.update_prompt_dismissed_at, None);
         assert!(!l.config.advanced_mode);
         assert!(l.config.check_updates_on_launch);
+        assert_eq!(l.config.update_last_checked_at, None);
         assert!(t.backups().is_empty());
     }
 
@@ -392,6 +399,7 @@ mod tests {
         assert_eq!(l.config.update_prompt_dismissed_at, Some(1_794_565_230));
         assert!(!l.config.advanced_mode);
         assert!(l.config.check_updates_on_launch);
+        assert_eq!(l.config.update_last_checked_at, None);
     }
 
     #[test]
@@ -400,6 +408,7 @@ mod tests {
         let c = AppConfig {
             advanced_mode: true,
             check_updates_on_launch: false,
+            update_last_checked_at: Some(1_795_176_000),
             quick_set_2: qs("Rack", "198.51.100.7", "255.255.255.0", "0.0.0.0"),
             ..AppConfig::default()
         };
@@ -409,6 +418,7 @@ mod tests {
         assert_eq!(l.config, c);
         assert!(l.config.advanced_mode);
         assert!(!l.config.check_updates_on_launch);
+        assert_eq!(l.config.update_last_checked_at, Some(1_795_176_000));
     }
 
     #[test]

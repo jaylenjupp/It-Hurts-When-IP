@@ -1,0 +1,17 @@
+{
+  "url": "https://api.github.com/repos/jaylenjupp/it-hurts-when-ip/releases/190000001",
+  "html_url": "https://github.com/jaylenjupp/it-hurts-when-ip/releases/tag/v1.14.0",
+  "id": 190000001,
+  "tag_name": "v1.14.0",
+  "target_commitish": "main",
+  "name": "It Hurts When IP v1.14.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-12-01T09:00:00Z",
+  "published_at": "2026-12-01T09:15:00Z",
+  "assets": [
+    {
+      "url": "https://api.github.com/repos/jaylenjupp/it-hurts-when-ip/releases/assets/290000001",
+      "id": 290000001,
+      "name": "ItHurtsWhenIP-1.14.0.pkg",
+      

@@ -187,9 +187,36 @@ fn get_last_interface(app: tauri::AppHandle) -> String {
     String::new()
 }
 
+/// Checks GitHub for a newer published release. A successful check records
+/// `update_last_checked_at`; failing to save that is only logged.
 #[tauri::command]
-async fn check_for_update() -> Result<update::UpdateInfo, String> {
-    update::check_for_update().await
+async fn check_for_update(
+    app: tauri::AppHandle,
+) -> Result<update::UpdateInfo, update::UpdateError> {
+    let info = update::check_for_update().await?;
+    if let Err(e) = update_config(&app, |config| {
+        config.update_last_checked_at = Some(info.checked_at)
+    }) {
+        eprintln!("[update] could not record last check time: {}", e);
+    }
+    Ok(info)
+}
+
+#[derive(Serialize)]
+struct UpdateStatus {
+    current_version: String,
+    build: build_info::BuildInfo,
+    last_checked_at: Option<i64>,
+}
+
+/// For Settings → Updates. No network.
+#[tauri::command]
+fn get_update_status(app: tauri::AppHandle) -> UpdateStatus {
+    UpdateStatus {
+        current_version: update::CURRENT_VERSION.to_string(),
+        build: build_info::build_info(),
+        last_checked_at: load_config(&app).update_last_checked_at,
+    }
 }
 
 #[tauri::command]
@@ -369,6 +396,7 @@ fn main() {
             save_last_interface,
             get_last_interface,
             check_for_update,
+            get_update_status,
             dismiss_update_prompt,
             get_update_prompt_dismissed_at,
             get_build_info,

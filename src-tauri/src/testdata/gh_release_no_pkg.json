@@ -1,0 +1,44 @@
+{
+  "url": "https://api.github.com/repos/jaylenjupp/it-hurts-when-ip/releases/190000001",
+  "html_url": "https://github.com/jaylenjupp/it-hurts-when-ip/releases/tag/v1.14.0",
+  "id": 190000001,
+  "tag_name": "v1.14.0",
+  "target_commitish": "main",
+  "name": "It Hurts When IP v1.14.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-12-01T09:00:00Z",
+  "published_at": "2026-12-01T09:15:00Z",
+  "assets": [
+    {
+      "url": "https://api.github.com/repos/jaylenjupp/it-hurts-when-ip/releases/assets/290000001",
+      "id": 290000001,
+      "name": "ItHurtsWhenIP-Setup-1.14.0.exe",
+      "label": "",
+      "content_type": "application/octet-stream",
+      "state": "uploaded",
+      "size": 6400000,
+      "download_count": 7,
+      "created_at": "2026-12-01T09:12:00Z",
+      "updated_at": "2026-12-01T09:12:05Z",
+      "browser_download_url": "https://github.com/jaylenjupp/it-hurts-when-ip/releases/download/v1.14.0/ItHurtsWhenIP-Setup-1.14.0.exe"
+    }
+    ,
+    {
+      "url": "https://api.github.com/repos/jaylenjupp/it-hurts-when-ip/releases/assets/290000002",
+      "id": 290000002,
+      "name": "ithurtswhenip-rescue.command",
+      "label": "",
+      "content_type": "application/octet-stream",
+      "state": "uploaded",
+      "size": 21034,
+      "download_count": 7,
+      "created_at": "2026-12-01T09:12:00Z",
+      "updated_at": "2026-12-01T09:12:05Z",
+      "browser_download_url": "https://github.com/jaylenjupp/it-hurts-when-ip/releases/download/v1.14.0/ithurtswhenip-rescue.command"
+    }
+  ],
+  "tarball_url": "https://api.github.com/repos/jaylenjupp/it-hurts-when-ip/tarball/v1.14.0",
+  "zipball_url": "https://api.github.com/repos/jaylenjupp/it-hurts-when-ip/zipball/v1.14.0",
+  "body": "Fixes and improvements."
+}
