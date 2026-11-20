@@ -15,6 +15,7 @@
 
 mod diagnostics;
 mod helper;
+mod installer;
 mod parse;
 mod repair;
 mod rescue;
@@ -31,6 +32,10 @@ pub use helper::HelperStatus;
 
 // Settings → Maintenance → Copy diagnostics (read-only).
 pub use diagnostics::{get_diagnostics, Diagnostics, DiagnosticsConfig};
+
+// Settings → Updates: checksum of a downloaded pkg and opening it in
+// Installer (release builds only).
+pub use installer::{open_pkg, sha256_file};
 
 const SYSTEM_NETWORKSETUP: &str = "/usr/sbin/networksetup";
 

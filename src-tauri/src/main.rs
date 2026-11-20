@@ -12,6 +12,7 @@ mod build_info;
 mod config;
 mod platform;
 mod update;
+mod update_download;
 
 use config::{AppConfig, QuickSetProfile};
 
@@ -202,6 +203,109 @@ async fn check_for_update(
     Ok(info)
 }
 
+// --- Update download (Settings → Updates) ---
+
+/// Downloads the latest published installer to the Downloads folder and
+/// checks it. Takes nothing from the frontend: it runs a fresh update check
+/// and downloads only that release's pkg (URL rules in update_download.rs).
+/// Progress goes out as `update-progress` `{received, total}`. One download
+/// at a time. Does not change `update_last_checked_at`.
+#[tauri::command]
+async fn update_download(
+    app: tauri::AppHandle,
+) -> Result<update_download::DownloadResult, update_download::DownloadError> {
+    use update_download::{DownloadError, DownloadResult, DownloadState, Progress};
+
+    let state = app.state::<DownloadState>();
+    let _busy = state.begin()?;
+
+    let info = update::check_for_update()
+        .await
+        .map_err(DownloadError::Check)?;
+    let (pkg, sha256_url) = update_download::pick(&info)?;
+    let dir = app.path().download_dir().map_err(|e| DownloadError::Disk {
+        path: "Downloads folder".to_string(),
+        detail: e.to_string(),
+    })?;
+
+    let client = update_download::build_client()?;
+    let expected = match &sha256_url {
+        Some(url) => Some(update_download::fetch_sha256(&client, url).await?),
+        None => None,
+    };
+    let mut src = update_download::open_pkg_stream(&client, &pkg.url, pkg.size).await?;
+
+    let emitter = app.clone();
+    let part = update_download::stream_to_part(
+        &mut src,
+        &dir,
+        &pkg.name,
+        pkg.size,
+        state.cancel_flag(),
+        std::time::Instant::now,
+        move |received, total| {
+            emitter
+                .emit(
+                    update_download::PROGRESS_EVENT,
+                    Progress { received, total },
+                )
+                .ok();
+        },
+    )
+    .await?;
+
+    // Hash off the async runtime. On a panic the guard inside the closure is
+    // dropped while unwinding, which removes the .part.
+    let part_path = part.path().to_path_buf();
+    let (part, checksum) = tauri::async_runtime::spawn_blocking(move || {
+        let r = update_download::verify_checksum(&part, expected.as_deref(), platform::sha256_file);
+        (part, r)
+    })
+    .await
+    .map_err(|e| DownloadError::Disk {
+        path: part_path.display().to_string(),
+        detail: format!("the checksum step failed: {}", e),
+    })?;
+    let checksum = checksum?;
+    if state
+        .cancel_flag()
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err(DownloadError::Cancelled);
+    }
+
+    let path = update_download::finalize(part, &dir, &pkg.name)?;
+    state.set_verified(path.clone(), pkg.size);
+    Ok(DownloadResult {
+        path: path.display().to_string(),
+        size: pkg.size,
+        checksum,
+        version: info.latest_version,
+    })
+}
+
+/// Asks a running download to stop (its .part file is removed).
+#[tauri::command]
+fn update_cancel_download(app: tauri::AppHandle) {
+    app.state::<update_download::DownloadState>().cancel();
+}
+
+/// Opens the last verified download in Installer (release builds; the user
+/// still clicks through it). Debug builds only return the command.
+#[tauri::command]
+async fn update_open_installer(
+    app: tauri::AppHandle,
+) -> Result<update_download::OpenResult, update_download::DownloadError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<update_download::DownloadState>()
+            .open_verified(platform::open_pkg)
+    })
+    .await
+    .map_err(|e| {
+        update_download::DownloadError::OpenFailed(format!("Installer couldn't be opened: {}", e))
+    })?
+}
+
 #[derive(Serialize)]
 struct UpdateStatus {
     current_version: String,
@@ -369,6 +473,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(update_download::DownloadState::default())
         .menu(platform::app_menu)
         .on_menu_event(|app, event| {
             // The menu items only open Settings or the Uninstall / Repair
@@ -397,6 +502,9 @@ fn main() {
             get_last_interface,
             check_for_update,
             get_update_status,
+            update_download,
+            update_cancel_download,
+            update_open_installer,
             dismiss_update_prompt,
             get_update_prompt_dismissed_at,
             get_build_info,

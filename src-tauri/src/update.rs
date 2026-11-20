@@ -28,7 +28,7 @@ const REQUEST_TIMEOUT_SECS: u64 = 10;
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // GitHub's API requires a User-Agent header on every request.
-const USER_AGENT: &str = concat!("ItHurtsWhenIP/", env!("CARGO_PKG_VERSION"));
+pub(crate) const USER_AGENT: &str = concat!("ItHurtsWhenIP/", env!("CARGO_PKG_VERSION"));
 
 /// A release asset, as shown to the frontend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
